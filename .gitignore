@@ -1,0 +1,20 @@
+# 运行环境 - node.exe 太大了(91MB)，不需要提交
+node.exe
+node_modules/
+
+# 数据库备份文件
+data/db.backup-*.json
+backups/
+
+# 操作系统文件
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# 环境变量 / 敏感配置
+.env
+.env.local
+
+# 临时文件
+*.tmp
+*.log

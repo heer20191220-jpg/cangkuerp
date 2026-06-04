@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>仓库 ERP - 产品库</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <section id="loginView" class="login-view">
+    <form id="loginForm" class="login-panel" autocomplete="off">
+      <div class="brand login-brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path d="M7 17.5 24 8l17 9.5v19L24 46 7 36.5v-19Z" fill="currentColor" opacity=".14"/>
+            <path d="M24 8 7 17.5l17 9.5 17-9.5L24 8Z" fill="currentColor" opacity=".28"/>
+            <path d="M14 21.5 24 27v11.2M34 21.5 24 27" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div>
+          <strong>仓库 ERP</strong>
+          <span>公司内网试运行版</span>
+        </div>
+      </div>
+      <label class="field"><span>账号</span><input id="loginUsername" type="text" placeholder="admin" required></label>
+      <label class="field"><span>密码</span><input id="loginPassword" type="password" placeholder="admin123" required></label>
+      <button class="primary-button login-button" type="submit">登录</button>
+      <p id="loginMessage" class="form-message"></p>
+      <p class="login-hint">默认管理员：admin / admin123；录入员：luru / 123456。上线前请修改默认密码。</p>
+    </form>
+  </section>
+
+  <div id="appView" class="app-shell hidden">
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 48 48" role="img">
+            <path d="M7 17.5 24 8l17 9.5v19L24 46 7 36.5v-19Z" fill="currentColor" opacity=".14"/>
+            <path d="M24 8 7 17.5l17 9.5 17-9.5L24 8Z" fill="currentColor" opacity=".28"/>
+            <path d="M14 21.5 24 27v11.2M34 21.5 24 27" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"/>
+          </svg>
+        </span>
+        <div><strong>仓库 ERP</strong><span>产品资料</span></div>
+      </div>
+      <nav class="nav-list">
+        <button class="nav-item active" type="button" title="产品库" aria-current="page">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"/><path d="M12 12 4.5 7.8M12 12l7.5-4.2M12 12v8"/></svg>
+          <span>产品库</span>
+        </button>
+      </nav>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <div>
+          <p class="eyebrow">公司内网试运行版</p>
+          <h1>产品库</h1>
+        </div>
+        <div class="status-strip" aria-label="系统状态">
+          <span id="userBadge">未登录</span>
+          <span id="productCount">0 个产品</span>
+          <button class="ghost-button compact" id="logoutButton" type="button">退出</button>
+        </div>
+      </header>
+
+      <section class="panel product-center" aria-label="产品库">
+        <div class="library-toolbar primary-toolbar">
+          <div class="search-group">
+            <input id="searchInput" class="search-input" type="search" placeholder="搜索店名、产品名、中文品名、英文品名、海关编码">
+          </div>
+          <div class="table-tools">
+            <button class="primary-button" id="newProductButton" type="button">新增产品</button>
+            <button class="ghost-button" id="downloadTemplateButton" type="button">下载模板</button>
+            <label class="file-button">
+              <input id="batchFileInput" type="file" accept=".csv,text/csv">
+              批量上传
+            </label>
+            <button class="ghost-button" id="exportButton" type="button">导出 CSV</button>
+          </div>
+        </div>
+
+        <p id="formMessage" class="form-message library-message"></p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>主图</th>
+                <th>店铺</th>
+                <th>产品名</th>
+                <th>中文品名</th>
+                <th>英文品名</th>
+                <th>类别</th>
+                <th>海关编码</th>
+                <th>计费重</th>
+                <th>采购价</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="productRows"><tr class="empty-row"><td colspan="10">暂无产品</td></tr></tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="productModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-panel">
+      <div class="modal-heading">
+        <h2 id="formTitle">新增产品</h2>
+        <button class="icon-button" id="closeModalButton" type="button" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <form id="productForm" autocomplete="off">
+        <div class="modal-body">
+          <div class="form-block">
+            <div class="form-row two">
+              <label class="field"><span>店铺名</span><input id="storeName" name="storeName" type="text" placeholder="例如：CJ4" required></label>
+              <label class="field"><span>产品类别</span><select id="category" name="category" required>
+                <option value="普货">普货</option>
+                <option value="纺织">纺织</option>
+                <option value="带电">带电</option>
+                <option value="带磁">带磁</option>
+                <option value="木质">木质</option>
+                <option value="敏感">敏感</option>
+              </select></label>
+            </div>
+            <label class="field full"><span>产品名</span><input id="customName" name="customName" type="text" placeholder="例如：派对礼物50ml玻璃空容器12pk" required></label>
+            <div class="collect-row">
+              <label class="field full"><span>1688采购链接</span><input id="purchaseUrl" name="purchaseUrl" type="url" placeholder="https://detail.1688.com/offer/..." ></label>
+              <button class="ghost-button collect-button" id="collect1688Button" type="button">采集</button>
+            </div>
+            <div class="form-row two">
+              <label class="field"><span>主图链接</span><input id="mainImage" name="mainImage" type="url" placeholder="采集后自动填入，也可手动粘贴"></label>
+              <label class="field"><span>变体信息</span>
+                <div class="variant-select">
+                  <button class="variant-select-button" id="variantDropdownButton" type="button">
+                    <span id="variantSummary">未采集变体</span>
+                    <span aria-hidden="true">▾</span>
+                  </button>
+                  <div id="variantDropdown" class="variant-dropdown hidden"></div>
+                </div>
+                <textarea id="variantsJson" class="hidden-field" name="variantsJson" rows="3"></textarea>
+              </label>
+            </div>
+            <div class="asset-preview">
+              <img id="mainImagePreview" alt="产品主图预览">
+              <div>
+                <strong>采集预览</strong>
+                <p id="collectStatus">未采集</p>
+                <div id="variantPreview" class="variant-preview"></div>
+              </div>
+            </div>
+            <div class="form-row three">
+              <label class="field"><span>中文品名</span><input id="zhName" name="zhName" type="text" placeholder="例如：玻璃瓶" maxlength="20" required></label>
+              <label class="field"><span>中文材质</span><input id="materialZh" name="materialZh" type="text" placeholder="例如：玻璃" maxlength="20" required></label>
+              <label class="field"><span>中文用途</span><input id="useZh" name="useZh" type="text" placeholder="例如：收纳" maxlength="20" required></label>
+            </div>
+            <div class="form-row three">
+              <label class="field"><span>长 cm</span><input id="length" name="length" type="number" min="0" step="0.01" inputmode="decimal" required></label>
+              <label class="field"><span>宽 cm</span><input id="width" name="width" type="number" min="0" step="0.01" inputmode="decimal" required></label>
+              <label class="field"><span>高 cm</span><input id="height" name="height" type="number" min="0" step="0.01" inputmode="decimal" required></label>
+            </div>
+            <div class="form-row two">
+              <label class="field"><span>重量 kg</span><input id="weight" name="weight" type="number" min="0" step="0.01" inputmode="decimal" required></label>
+              <label class="field"><span>采购价 RMB</span><input id="price" name="price" type="number" min="0" step="0.01" inputmode="decimal" required></label>
+            </div>
+          </div>
+
+          <section class="result-panel modal-preview" aria-live="polite">
+            <div class="panel-heading">
+              <h2>自动生成</h2>
+              <span id="ruleLabel" class="rule-label">待查询</span>
+            </div>
+            <div class="result-list">
+              <article class="result-item important"><span>英文品名</span><strong id="generatedEnName">-</strong></article>
+              <article class="result-item important"><span>海关编码</span><strong id="hsCode">待查询</strong></article>
+              <article class="result-item"><span>计费重</span><strong id="chargeWeight">0.00 kg</strong></article>
+              <article class="result-item"><span>体积</span><strong id="volume">0.000000 m3</strong></article>
+              <article class="result-item"><span>英文用途</span><strong id="useEn">-</strong></article>
+              <article class="result-item"><span>英文材质</span><strong id="materialEn">-</strong></article>
+              <article class="result-item"><span>申报名称</span><strong id="declarationName">-</strong></article>
+              <article class="result-item"><span>产品类别</span><strong id="categoryPreview">普货</strong></article>
+            </div>
+          </section>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button" id="cancelEditButton" type="button">取消</button>
+          <button class="primary-button" type="submit">保存产品</button>
+        </div>
+      </form>
+    </section>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

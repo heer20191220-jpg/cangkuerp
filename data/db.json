@@ -1,0 +1,674 @@
+{
+  "users": [
+    {
+      "id": "user_admin",
+      "username": "admin",
+      "displayName": "管理员",
+      "role": "admin",
+      "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
+      "createdAt": "2026-06-02T15:10:58.307Z"
+    },
+    {
+      "id": "user_entry",
+      "username": "luru",
+      "displayName": "录入员",
+      "role": "operator",
+      "passwordHash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
+      "createdAt": "2026-06-02T15:10:58.307Z"
+    }
+  ],
+  "sessions": [
+    {
+      "token": "3efb67e0f5cf8876dfa8d51d3db1359fbba48ec23be4c8630535bfb5b115d1f4",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T07:58:02.401Z",
+      "expiresAt": "2026-06-04T15:58:02.401Z"
+    },
+    {
+      "token": "0aa206618dc4a14a83376d6d667730decb237ba067593608eb0651bd87533ad8",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:04:54.215Z",
+      "expiresAt": "2026-06-04T16:04:54.216Z"
+    },
+    {
+      "token": "22c518484bfaf8a22da8a9ad695d4badf22b7f39661cfe90f0086409d50b834b",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:26:18.864Z",
+      "expiresAt": "2026-06-04T16:26:18.866Z"
+    },
+    {
+      "token": "945aac7e9e5095ebc8fee9c1cc3299611831e402a31b164107ab2f94d2dd1e15",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:26:46.385Z",
+      "expiresAt": "2026-06-04T16:26:46.386Z"
+    },
+    {
+      "token": "917a409e0e40e8ae5b29bd43c15825e83cf86a69b3502a737522a8179dc762ac",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:27:55.445Z",
+      "expiresAt": "2026-06-04T16:27:55.446Z"
+    },
+    {
+      "token": "9c169790717ee0e9c4dfed30468ec59aceb1b90c4af0c2d69d33055b3746a525",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:53:42.761Z",
+      "expiresAt": "2026-06-04T16:53:42.762Z"
+    },
+    {
+      "token": "b4e7c614ed7a610a065fa7dc44b20e064c2034d17929ee291de5fe3b4c52a7e6",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:54:11.532Z",
+      "expiresAt": "2026-06-04T16:54:11.533Z"
+    },
+    {
+      "token": "e6cc5675dd79f542cb71ce49ea0357f0f402d12b172ec304ca89f0ffb0c37758",
+      "userId": "user_admin",
+      "createdAt": "2026-06-04T08:54:35.067Z",
+      "expiresAt": "2026-06-04T16:54:35.069Z"
+    }
+  ],
+  "products": [
+    {
+      "id": "prod_28f62e24-d816-403f-baac-61e07f3a7003",
+      "storeName": "KJ4",
+      "customName": "MPPT太阳能控制器",
+      "declarationName": "KJ4-MPPT太阳能控制器",
+      "zhName": "控制器",
+      "enName": "General Merchandise",
+      "materialZh": "塑料",
+      "materialEn": "Plastic",
+      "useZh": "控制",
+      "useEn": "For Daily Use",
+      "category": "普货",
+      "length": 41,
+      "width": 41,
+      "height": 5,
+      "weight": 0.5,
+      "price": 20,
+      "volumeCbm": 0.008405,
+      "chargeWeight": 1.4,
+      "hsCode": "8537109021",
+      "hsLabel": "在线匹配：控制器 用于机器人或末端操纵装置(详见核两用清单）",
+      "createdAt": "2026-06-03T09:35:20.077Z",
+      "createdBy": "user_admin",
+      "updatedAt": "2026-06-04T08:40:39.345Z",
+      "updatedBy": "user_admin",
+      "purchaseUrl": "https://detail.1688.com/offer/951676010827.html?lang=zh&kjSource=pc&fromkv=refer%3AHVJFCVZUGJKEUTS2KRLDMT2KKZDUKM2EJ5HFEUKHIVMUIUKNKJMEYNKXJBAVGM2",
+      "mainImage": "https://cbu01.alicdn.com/img/ibank/O1CN01IkzRvd1Lzy4zAwHZ9_!!2219829571371-0-cib.jpg",
+      "variants": [
+        {
+          "name": "品牌",
+          "image": ""
+        },
+        {
+          "name": "替代Milwaukee米沃奇",
+          "image": ""
+        },
+        {
+          "name": "防护功能",
+          "image": ""
+        },
+        {
+          "name": "过充保护",
+          "image": ""
+        },
+        {
+          "name": "指示灯状态",
+          "image": ""
+        },
+        {
+          "name": "充电中红灯，充满电绿灯",
+          "image": ""
+        },
+        {
+          "name": "应用范围",
+          "image": ""
+        },
+        {
+          "name": "锂电池充电",
+          "image": ""
+        },
+        {
+          "name": "输入参数",
+          "image": ""
+        },
+        {
+          "name": "100V-240V",
+          "image": ""
+        },
+        {
+          "name": "输出参数",
+          "image": ""
+        },
+        {
+          "name": "14V18V",
+          "image": ""
+        },
+        {
+          "name": "额定功率",
+          "image": ""
+        },
+        {
+          "name": "100W",
+          "image": ""
+        },
+        {
+          "name": "产品系列",
+          "image": ""
+        },
+        {
+          "name": "替代米沃奇",
+          "image": ""
+        },
+        {
+          "name": "质保",
+          "image": ""
+        },
+        {
+          "name": "一 年",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-rox-wap-top-search",
+          "image": ""
+        },
+        {
+          "name": "@ali/tdmod-rox-1688-od-header",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-top",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-order-tab",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-price",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-daily-rights",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-rights-panel",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-new-plus-card",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-free-credit",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-fans-discounts-derate",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-title",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-rank",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-bottom-circular",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-wap-od-jgdz-xddz-service",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-service",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-distribution",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-blank-component",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-common-blank",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-top-circular",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-logistics",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-specs",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-attribute",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-cert",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-biz-banner",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-comment",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-question-answer",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-rox-wap-od-store-evaluate",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-offer-store",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-store-match",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-store-recommend",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-odw-basic-description",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-odw-basic-footer",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-odw-bottom-line",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-magic-cube-loader",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-sem-entry",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-od-wap-live-modal",
+          "image": ""
+        },
+        {
+          "name": "@ali/tdmod-offer-set-wxshare",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-search-redpack",
+          "image": ""
+        },
+        {
+          "name": "@ali/cmod-zgc-od-custom-service-dialog",
+          "image": ""
+        },
+        {
+          "name": "@ali/tdmod-od-goldlog-exp",
+          "image": ""
+        }
+      ]
+    },
+    {
+      "id": "prod_b67d3e9c-3017-4d1a-b83b-1170904fd029",
+      "storeName": "KJ4",
+      "customName": "派对礼物50ml玻璃空容器12pk",
+      "declarationName": "KJ4-派对礼物50ml玻璃空容器12pk",
+      "zhName": "玻璃瓶",
+      "enName": "General Merchandise",
+      "materialZh": "玻璃",
+      "materialEn": "To Be Confirmed",
+      "useZh": "收纳",
+      "useEn": "For Storage",
+      "category": "普货",
+      "length": 10,
+      "width": 10,
+      "height": 5,
+      "weight": 0.5,
+      "price": 5,
+      "volumeCbm": 0.0005,
+      "chargeWeight": 0.5,
+      "hsCode": "7010909000",
+      "hsLabel": "玻璃制容器",
+      "createdAt": "2026-06-03T09:31:32.725Z",
+      "createdBy": "user_admin",
+      "updatedAt": "2026-06-04T08:57:33.093Z",
+      "updatedBy": "user_admin",
+      "purchaseUrl": "https://detail.1688.com/offer/990887089784.html?kj_agent_plugin=ljxp",
+      "mainImage": "https://cbu01.alicdn.com/img/ibank/O1CN01lTqVZe1ygWItCWA67_!!2221124876608-0-cib.jpg",
+      "variants": [
+        {
+          "name": "品牌",
+          "image": ""
+        },
+        {
+          "name": "七河",
+          "image": ""
+        },
+        {
+          "name": "安装形式",
+          "image": ""
+        },
+        {
+          "name": "免打孔式",
+          "image": ""
+        },
+        {
+          "name": "类型",
+          "image": ""
+        },
+        {
+          "name": "门阻",
+          "image": ""
+        },
+        {
+          "name": "控制方式",
+          "image": ""
+        },
+        {
+          "name": "手动",
+          "image": ""
+        },
+        {
+          "name": "结构",
+          "image": ""
+        },
+        {
+          "name": "标准型",
+          "image": ""
+        },
+        {
+          "name": "加工定制",
+          "image": ""
+        },
+        {
+          "name": "否",
+          "image": ""
+        },
+        {
+          "name": "货号",
+          "image": ""
+        },
+        {
+          "name": "DMQ",
+          "image": ""
+        },
+        {
+          "name": "重型插销",
+          "image": ""
+        },
+        {
+          "name": "表面处理",
+          "image": ""
+        },
+        {
+          "name": "其他",
+          "image": ""
+        },
+        {
+          "name": "风格",
+          "image": ""
+        },
+        {
+          "name": "现代简约",
+          "image": ""
+        },
+        {
+          "name": "材质",
+          "image": ""
+        },
+        {
+          "name": "铝合金",
+          "image": ""
+        },
+        {
+          "name": "双吸盘【标准款】内外开门通用",
+          "image": ""
+        },
+        {
+          "name": "双吸盘【报警款】内外开门通用",
+          "image": ""
+        }
+      ]
+    }
+  ],
+  "hsCodes": [
+    {
+      "id": "hs_001",
+      "terms": [
+        "隔尿垫",
+        "尿垫"
+      ],
+      "code": "9619009000",
+      "label": "母婴护理"
+    },
+    {
+      "id": "hs_002",
+      "terms": [
+        "卸扣",
+        "扣具"
+      ],
+      "code": "7326909000",
+      "label": "五金配件"
+    },
+    {
+      "id": "hs_003",
+      "terms": [
+        "电话手表",
+        "智能手表",
+        "手表"
+      ],
+      "code": "8517629900",
+      "label": "通讯设备"
+    },
+    {
+      "id": "hs_004",
+      "terms": [
+        "手机壳",
+        "保护壳",
+        "手机套"
+      ],
+      "code": "3926909090",
+      "label": "塑料制品"
+    },
+    {
+      "id": "hs_005",
+      "terms": [
+        "数据线",
+        "充电线",
+        "连接线"
+      ],
+      "code": "8544421900",
+      "label": "线缆"
+    },
+    {
+      "id": "hs_006",
+      "terms": [
+        "充电器",
+        "电源"
+      ],
+      "code": "8504409999",
+      "label": "电源设备"
+    },
+    {
+      "id": "hs_007",
+      "terms": [
+        "耳机"
+      ],
+      "code": "8518300000",
+      "label": "音频设备"
+    },
+    {
+      "id": "hs_008",
+      "terms": [
+        "键盘"
+      ],
+      "code": "8471607100",
+      "label": "电脑配件"
+    },
+    {
+      "id": "hs_009",
+      "terms": [
+        "鼠标"
+      ],
+      "code": "8471607200",
+      "label": "电脑配件"
+    },
+    {
+      "id": "hs_010",
+      "terms": [
+        "玩具",
+        "模型",
+        "积木"
+      ],
+      "code": "9503008900",
+      "label": "玩具"
+    },
+    {
+      "id": "hs_011",
+      "terms": [
+        "衣服",
+        "上衣",
+        "裤子",
+        "裙子",
+        "外套",
+        "T恤",
+        "卫衣"
+      ],
+      "code": "6109909060",
+      "label": "服装"
+    },
+    {
+      "id": "hs_012",
+      "terms": [
+        "背包",
+        "手提包",
+        "钱包",
+        "包袋",
+        "妈咪包"
+      ],
+      "code": "4202920000",
+      "label": "包袋"
+    },
+    {
+      "id": "hs_013",
+      "terms": [
+        "收纳盒",
+        "餐具",
+        "杯子",
+        "碗",
+        "盘子"
+      ],
+      "code": "3924900000",
+      "label": "家居用品"
+    },
+    {
+      "id": "hs_014",
+      "terms": [
+        "项链",
+        "手链",
+        "耳环",
+        "戒指",
+        "发夹"
+      ],
+      "code": "7117190000",
+      "label": "饰品"
+    },
+    {
+      "id": "hs_015",
+      "terms": [
+        "木盒",
+        "木架",
+        "木制品"
+      ],
+      "code": "4421999090",
+      "label": "木制品"
+    },
+    {
+      "id": "hs_016",
+      "terms": [
+        "玻璃瓶",
+        "玻璃罐",
+        "玻璃容器",
+        "空容器"
+      ],
+      "code": "7010909000",
+      "label": "玻璃制容器"
+    },
+    {
+      "id": "hs_7717eb2a-7d67-47ab-91c3-3940afa4673a",
+      "terms": [
+        "袋子"
+      ],
+      "code": "4202320000",
+      "label": "在线匹配：塑料片或纺织材料作面的钱包等物品 指通常置于口袋或手提包内的物品"
+    },
+    {
+      "id": "hs_6e3046af-cff8-4b53-ad48-bbed18a00f35",
+      "terms": [
+        "控制器"
+      ],
+      "code": "8537109021",
+      "label": "在线匹配：控制器 用于机器人或末端操纵装置(详见核两用清单）"
+    }
+  ],
+  "logs": [
+    {
+      "id": "log_755a73d3-20f3-4e96-b310-74c30ab21eff",
+      "userId": "user_admin",
+      "username": "admin",
+      "action": "update_product",
+      "targetId": "prod_b67d3e9c-3017-4d1a-b83b-1170904fd029",
+      "detail": "修改商品 KJ4-派对礼物50ml玻璃空容器12pk",
+      "createdAt": "2026-06-04T08:57:33.094Z"
+    },
+    {
+      "id": "log_ad28e9f9-ed1d-4747-adff-f734b112b099",
+      "userId": "user_admin",
+      "username": "admin",
+      "action": "update_product",
+      "targetId": "prod_28f62e24-d816-403f-baac-61e07f3a7003",
+      "detail": "修改商品 KJ4-MPPT太阳能控制器",
+      "createdAt": "2026-06-04T08:40:39.348Z"
+    },
+    {
+      "id": "log_209269d2-e028-4697-87c9-685857aecb7f",
+      "userId": "user_admin",
+      "username": "admin",
+      "action": "create_product",
+      "targetId": "prod_28f62e24-d816-403f-baac-61e07f3a7003",
+      "detail": "新增商品 KJ4-MPPT太阳能控制器",
+      "createdAt": "2026-06-03T09:35:20.077Z"
+    },
+    {
+      "id": "log_ea32df0c-13c1-4f2c-b395-35ce7f07e95a",
+      "userId": "user_admin",
+      "username": "admin",
+      "action": "create_product",
+      "targetId": "prod_b67d3e9c-3017-4d1a-b83b-1170904fd029",
+      "detail": "新增商品 KJ4-派对礼物50ml玻璃空容器12pk",
+      "createdAt": "2026-06-03T09:31:32.725Z"
+    }
+  ]
+}
