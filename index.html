@@ -43,9 +43,13 @@
         <div><strong>仓库 ERP</strong><span>产品资料</span></div>
       </div>
       <nav class="nav-list">
-        <button class="nav-item active" type="button" title="产品库" aria-current="page">
+        <button class="nav-item active" id="productsNavButton" type="button" title="产品库" aria-current="page">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7.5 12 3l8 4.5v9L12 21l-8-4.5v-9Z"/><path d="M12 12 4.5 7.8M12 12l7.5-4.2M12 12v8"/></svg>
           <span>产品库</span>
+        </button>
+        <button class="nav-item" id="shopsNavButton" type="button" title="店铺管理">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Z"/><path d="M5 9v11h14V9"/><path d="M9 20v-6h6v6"/></svg>
+          <span>店铺管理</span>
         </button>
       </nav>
     </aside>
@@ -54,7 +58,7 @@
       <header class="topbar">
         <div>
           <p class="eyebrow">公司内网试运行版</p>
-          <h1>产品库</h1>
+          <h1 id="pageTitle">产品库</h1>
         </div>
         <div class="status-strip" aria-label="系统状态">
           <span id="userBadge">未登录</span>
@@ -63,7 +67,7 @@
         </div>
       </header>
 
-      <section class="panel product-center" aria-label="产品库">
+      <section class="panel product-center" id="productsPage" aria-label="产品库">
         <div class="library-toolbar primary-toolbar">
           <div class="search-group">
             <input id="searchInput" class="search-input" type="search" placeholder="搜索店名、产品名、中文品名、英文品名、海关编码">
@@ -101,7 +105,98 @@
           </table>
         </div>
       </section>
+
+      <section class="panel product-center hidden" id="shopsPage" aria-label="店铺管理">
+        <div class="library-toolbar primary-toolbar">
+          <div>
+            <h2>店铺管理</h2>
+            <p class="panel-subtitle">绑定 Mercado Libre、noon、takealot 店铺，后续可扩展订单、商品和库存同步。</p>
+          </div>
+          <div class="table-tools">
+            <button class="primary-button" id="newShopButton" type="button">新增店铺</button>
+          </div>
+        </div>
+
+        <p id="shopMessage" class="form-message library-message"></p>
+
+        <div class="table-wrap">
+          <table class="shops-table">
+            <thead>
+              <tr>
+                <th>店铺名称</th>
+                <th>平台</th>
+                <th>Seller ID</th>
+                <th>授权方式</th>
+                <th>API Key</th>
+                <th>Access Token</th>
+                <th>状态</th>
+                <th>最后同步</th>
+                <th>错误信息</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="shopRows"><tr class="empty-row"><td colspan="10">暂无店铺</td></tr></tbody>
+          </table>
+        </div>
+      </section>
     </main>
+  </div>
+
+  <div id="shopModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shopFormTitle">
+    <div class="modal-backdrop" data-close-shop-modal></div>
+    <section class="modal-panel shop-modal-panel">
+      <div class="modal-heading">
+        <h2 id="shopFormTitle">新增店铺</h2>
+        <button class="icon-button" id="closeShopModalButton" type="button" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <form id="shopForm" autocomplete="off">
+        <div class="modal-body single-column">
+          <div class="form-row three">
+            <label class="field"><span>店铺名称</span><input id="shopName" name="shopName" type="text" placeholder="例如：美客多 MX 店" required></label>
+            <label class="field"><span>平台类型</span><select id="platformType" name="platformType" required>
+              <option value="mercadolibre">Mercado Libre / 美客多</option>
+              <option value="noon">noon</option>
+              <option value="takealot">takealot</option>
+            </select></label>
+            <label class="field"><span>授权方式</span><select id="shopAuthType" name="shopAuthType" required>
+              <option value="oauth">OAuth</option>
+              <option value="api_key">API Key</option>
+              <option value="manual">手动</option>
+            </select></label>
+          </div>
+          <label class="field full"><span>Seller ID / 店铺账号</span><input id="shopAccount" name="shopAccount" type="text" placeholder="例如：MercadoLibre seller id / noon store code / takealot seller id" required></label>
+          <div class="form-row two credential-row" data-auth-field="oauth">
+            <label class="field"><span>Access Token</span><input id="shopAccessToken" name="shopAccessToken" type="password" placeholder="Mercado Libre access_token"></label>
+            <label class="field"><span>Refresh Token</span><input id="shopRefreshToken" name="shopRefreshToken" type="password" placeholder="Mercado Libre refresh_token"></label>
+          </div>
+          <div class="form-row two credential-row" data-auth-field="api_key oauth">
+            <label class="field"><span>API Key / Client ID</span><input id="shopApiKey" name="shopApiKey" type="password" placeholder="编辑时留空表示不修改"></label>
+            <label class="field"><span>API Secret</span><input id="shopApiSecret" name="shopApiSecret" type="password" placeholder="编辑时留空表示不修改"></label>
+          </div>
+          <div class="form-row two">
+            <label class="field"><span>Token 过期时间</span><input id="shopTokenExpiresAt" name="shopTokenExpiresAt" type="datetime-local"></label>
+            <label class="field"><span>备注</span><input id="shopRemark" name="shopRemark" type="text" placeholder="例如：负责人张三"></label>
+          </div>
+          <div class="shop-secret-hint">
+            <strong>安全提示</strong>
+            <p>Token、API Key 和 Secret 会加密保存。再次查看时只显示脱敏内容，普通员工不能看到完整密钥。</p>
+            <p>Mercado Libre 授权前，请先在开发者后台把 Redirect URI 设置为当前 ERP 地址下的 <code>/oauth/mercadolibre/callback</code>。</p>
+            <p id="shopMaskedPreview">当前密钥：未填写</p>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button" id="startMercadoLibreAuthButton" type="button">开始美客多授权</button>
+          <button class="ghost-button" id="testShopConnectionButton" type="button">测试连接</button>
+          <button class="ghost-button" id="refreshShopTokenButton" type="button">刷新 Token</button>
+          <button class="ghost-button" id="cancelShopButton" type="button">取消</button>
+          <button class="primary-button" type="submit">保存店铺</button>
+        </div>
+      </form>
+    </section>
   </div>
 
   <div id="productModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="formTitle">

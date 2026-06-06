@@ -11,6 +11,10 @@ const DATA_DIR = path.join(ROOT, "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 8;
 const VOLUME_DIVISOR = 6000;
+const DEFAULT_TENANT_ID = "tenant_default";
+const ENCRYPTION_KEY = crypto.createHash("sha256")
+  .update(process.env.ERP_SECRET_KEY || `warehouse-erp-local-key:${ROOT}`)
+  .digest();
 
 const mimeTypes = {
   ".html": "text/html; charset=utf-8",
@@ -68,11 +72,14 @@ function defaultHsCodes() {
 function seedDb() {
   return {
     users: [
-      { id: "user_admin", username: "admin", displayName: "管理员", role: "admin", passwordHash: sha256("admin123"), createdAt: nowIso() },
-      { id: "user_entry", username: "luru", displayName: "录入员", role: "operator", passwordHash: sha256("123456"), createdAt: nowIso() }
+      { id: "user_admin", username: "admin", displayName: "管理员", role: "admin", tenantId: DEFAULT_TENANT_ID, passwordHash: sha256("admin123"), createdAt: nowIso() },
+      { id: "user_entry", username: "luru", displayName: "录入员", role: "operator", tenantId: DEFAULT_TENANT_ID, passwordHash: sha256("123456"), createdAt: nowIso() }
     ],
     sessions: [],
     products: [],
+    shops: [],
+    storeBindings: [],
+    oauthStates: [],
     hsCodes: defaultHsCodes(),
     logs: []
   };
@@ -90,9 +97,14 @@ async function loadDb() {
   db.sessions ||= [];
   db.logs ||= [];
   db.products ||= [];
+  db.shops ||= [];
+  db.storeBindings ||= [];
+  db.oauthStates ||= [];
+  db.shops = normalizeShops(db.shops);
   db.hsCodes = hasBrokenChinese(db.hsCodes) ? defaultHsCodes() : (db.hsCodes || defaultHsCodes());
   db.users = normalizeUsers(db.users);
   db.sessions = db.sessions.filter((item) => new Date(item.expiresAt).getTime() > Date.now());
+  db.oauthStates = db.oauthStates.filter((item) => new Date(item.expires_at).getTime() > Date.now());
   await saveDb();
 }
 
@@ -106,8 +118,36 @@ function normalizeUsers(users = []) {
   for (const user of result) {
     if (user.id === "user_admin" || user.username === "admin") user.displayName = "管理员";
     if (user.id === "user_entry" || user.username === "luru") user.displayName = "录入员";
+    user.tenantId ||= DEFAULT_TENANT_ID;
   }
   return result;
+}
+
+function normalizeShops(shops = []) {
+  return shops.map((shop) => {
+    const platform = normalizePlatformType(shop.platform || shop.platformType || "mercadolibre");
+    const authType = normalizeAuthType(shop.auth_type || shop.authType || defaultAuthType(platform));
+    const statusMap = { "未连接": "disconnected", "已连接": "connected", "连接失败": "failed" };
+    return {
+      ...shop,
+      tenant_id: shop.tenant_id || shop.tenantId || DEFAULT_TENANT_ID,
+      platform,
+      shop_name: shop.shop_name || shop.shopName || "",
+      seller_id: shop.seller_id || shop.sellerId || shop.shopAccount || "",
+      auth_type: authType,
+      access_token_encrypted: shop.access_token_encrypted || "",
+      refresh_token_encrypted: shop.refresh_token_encrypted || "",
+      api_key_encrypted: shop.api_key_encrypted || shop.encryptedApiKey || "",
+      api_secret_encrypted: shop.api_secret_encrypted || shop.encryptedApiSecret || "",
+      token_expires_at: shop.token_expires_at || shop.tokenExpiresAt || "",
+      status: statusMap[shop.status] || shop.status || "disconnected",
+      last_sync_at: shop.last_sync_at || shop.lastSyncAt || "",
+      last_error: shop.last_error || shop.statusMessage || "",
+      created_at: shop.created_at || shop.createdAt || nowIso(),
+      updated_at: shop.updated_at || shop.updatedAt || nowIso(),
+      deleted_at: shop.deleted_at || shop.deletedAt || ""
+    };
+  });
 }
 
 function saveDb() {
@@ -139,7 +179,11 @@ function getSession(req) {
 }
 
 function publicUser(user) {
-  return { id: user.id, username: user.username, displayName: user.displayName, role: user.role };
+  return { id: user.id, username: user.username, displayName: user.displayName, role: user.role, tenantId: getTenantId(user) };
+}
+
+function getTenantId(user) {
+  return user.tenantId || DEFAULT_TENANT_ID;
 }
 
 function requireAuth(req, res) {
@@ -654,6 +698,395 @@ function addLog(user, action, targetId, detail) {
   db.logs = db.logs.slice(0, 1000);
 }
 
+function encryptSecret(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", ENCRYPTION_KEY, iv);
+  const encrypted = Buffer.concat([cipher.update(text, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `v1:${iv.toString("base64")}:${tag.toString("base64")}:${encrypted.toString("base64")}`;
+}
+
+function decryptSecret(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  const [version, ivText, tagText, encryptedText] = text.split(":");
+  if (version !== "v1" || !ivText || !tagText || !encryptedText) return "";
+  const decipher = crypto.createDecipheriv("aes-256-gcm", ENCRYPTION_KEY, Buffer.from(ivText, "base64"));
+  decipher.setAuthTag(Buffer.from(tagText, "base64"));
+  return Buffer.concat([
+    decipher.update(Buffer.from(encryptedText, "base64")),
+    decipher.final()
+  ]).toString("utf8");
+}
+
+function maskSecret(value) {
+  const text = String(value || "");
+  if (!text) return "";
+  if (text.length <= 8) return `${text.slice(0, 2)}****${text.slice(-2)}`;
+  return `${text.slice(0, 7)}****${text.slice(-4)}`;
+}
+
+function bindingForShop(shopId) {
+  return db.storeBindings.find((binding) => binding.shopId === shopId && !binding.deletedAt);
+}
+
+function sanitizeShop(shop) {
+  const apiKey = decryptSecret(shop.api_key_encrypted);
+  const apiSecret = decryptSecret(shop.api_secret_encrypted);
+  const accessToken = decryptSecret(shop.access_token_encrypted);
+  const refreshToken = decryptSecret(shop.refresh_token_encrypted);
+  return {
+    id: shop.id,
+    tenant_id: shop.tenant_id,
+    platform: shop.platform,
+    shop_name: shop.shop_name,
+    seller_id: shop.seller_id,
+    auth_type: shop.auth_type,
+    status: shop.status,
+    token_expires_at: shop.token_expires_at || "",
+    last_sync_at: shop.last_sync_at || "",
+    last_error: shop.last_error || "",
+    api_key_masked: maskSecret(apiKey),
+    api_secret_masked: maskSecret(apiSecret),
+    access_token_masked: maskSecret(accessToken),
+    refresh_token_masked: maskSecret(refreshToken),
+    has_api_key: Boolean(apiKey),
+    has_api_secret: Boolean(apiSecret),
+    has_access_token: Boolean(accessToken),
+    has_refresh_token: Boolean(refreshToken),
+    created_at: shop.created_at,
+    updated_at: shop.updated_at,
+    deleted_at: shop.deleted_at || ""
+  };
+}
+
+function findTenantShop(user, id, includeDeleted = false) {
+  const tenantId = getTenantId(user);
+  return db.shops.find((shop) => (shop.id === id || shop.shopName === id) && getShopTenantId(shop) === tenantId && (includeDeleted || !shop.deleted_at));
+}
+
+function normalizeShopPayload(body, existingShop = null, user = null) {
+  const now = nowIso();
+  const platform = normalizePlatformType(body.platform || body.platformType || existingShop?.platform || "mercadolibre");
+  const authType = normalizeAuthType(body.auth_type || body.authType || existingShop?.auth_type || defaultAuthType(platform));
+  return {
+    id: existingShop?.id || createId("shop"),
+    tenant_id: existingShop?.tenant_id || existingShop?.tenantId || getTenantId(user),
+    platform,
+    shop_name: String(body.shop_name || body.shopName || "").trim(),
+    seller_id: String(body.seller_id || body.sellerId || body.shopAccount || "").trim(),
+    auth_type: authType,
+    access_token_encrypted: existingShop?.access_token_encrypted || "",
+    refresh_token_encrypted: existingShop?.refresh_token_encrypted || "",
+    api_key_encrypted: existingShop?.api_key_encrypted || "",
+    api_secret_encrypted: existingShop?.api_secret_encrypted || "",
+    token_expires_at: String(body.token_expires_at || body.tokenExpiresAt || existingShop?.token_expires_at || "").trim(),
+    status: existingShop?.status || "disconnected",
+    last_sync_at: existingShop?.last_sync_at || "",
+    last_error: existingShop?.last_error || "",
+    created_at: existingShop?.created_at || existingShop?.createdAt || now,
+    created_by: existingShop?.created_by || existingShop?.createdBy || user.id,
+    updated_at: now,
+    updated_by: user.id,
+    deleted_at: existingShop?.deleted_at || existingShop?.deletedAt || ""
+  };
+}
+
+function validateShopPayload(shop) {
+  const missing = [];
+  if (!shop.shop_name) missing.push("店铺名称");
+  if (!shop.platform) missing.push("平台类型");
+  if (!shop.seller_id) missing.push("Seller ID/店铺账号");
+  if (!shop.auth_type) missing.push("授权方式");
+  if (!marketplaceAdapters[shop.platform]) missing.push("支持的平台");
+  return missing.length ? `缺少必填字段：${missing.join("、")}` : null;
+}
+
+function applyShopSecrets(shop, body) {
+  const apiKey = String(body.api_key || body.apiKey || "").trim();
+  const apiSecret = String(body.api_secret || body.apiSecret || "").trim();
+  const accessToken = String(body.access_token || body.accessToken || "").trim();
+  const refreshToken = String(body.refresh_token || body.refreshToken || "").trim();
+  if (apiKey) shop.api_key_encrypted = encryptSecret(apiKey);
+  if (apiSecret) shop.api_secret_encrypted = encryptSecret(apiSecret);
+  if (accessToken) shop.access_token_encrypted = encryptSecret(accessToken);
+  if (refreshToken) shop.refresh_token_encrypted = encryptSecret(refreshToken);
+  return shop;
+}
+
+function getShopCredentials(shop) {
+  return {
+    apiKey: decryptSecret(shop.api_key_encrypted),
+    apiSecret: decryptSecret(shop.api_secret_encrypted),
+    accessToken: decryptSecret(shop.access_token_encrypted),
+    refreshToken: decryptSecret(shop.refresh_token_encrypted)
+  };
+}
+
+function normalizePlatformType(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "");
+  if (["mercadolibre", "mercadolibre美客多", "美客多"].includes(normalized)) return "mercadolibre";
+  if (normalized === "tiktokshop") return "tiktokshop";
+  return normalized;
+}
+
+function normalizeAuthType(value) {
+  const normalized = String(value || "").trim().toLowerCase().replace(/[\s_-]+/g, "_");
+  return ["oauth", "api_key", "manual"].includes(normalized) ? normalized : "manual";
+}
+
+function defaultAuthType(platform) {
+  if (platform === "mercadolibre") return "oauth";
+  if (["noon", "takealot"].includes(platform)) return "api_key";
+  return "manual";
+}
+
+function getShopTenantId(shop) {
+  return shop.tenant_id || shop.tenantId || DEFAULT_TENANT_ID;
+}
+
+function assertSecretRequirements(shop, isCreate = false) {
+  const credentials = getShopCredentials(shop);
+  if (shop.auth_type === "oauth") {
+    if (isCreate && !credentials.accessToken && !credentials.refreshToken) return "OAuth 店铺至少需要 access_token 或 refresh_token";
+  }
+  if (shop.auth_type === "api_key") {
+    if (isCreate && !credentials.apiKey) return "API Key 店铺必须填写 API Key";
+  }
+  return null;
+}
+
+class MarketplaceAdapter {
+  async testConnection() {
+    throw new Error("该平台暂未实现测试连接");
+  }
+
+  async refreshToken() {
+    throw new Error("该平台暂不支持刷新 token");
+  }
+
+  async fetchOrders() {
+    throw new Error("订单同步适配器待接入");
+  }
+
+  async fetchProducts() {
+    throw new Error("商品同步适配器待接入");
+  }
+
+  async updateStock() {
+    throw new Error("库存同步适配器待接入");
+  }
+}
+
+class MercadoLibreAdapter extends MarketplaceAdapter {
+  async testConnection(shop) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.accessToken) throw new Error("缺少 Mercado Libre access_token");
+    const response = await fetch("https://api.mercadolibre.com/users/me", {
+      headers: { "Authorization": `Bearer ${credentials.accessToken}`, "Accept": "application/json" },
+      signal: AbortSignal.timeout(8000)
+    });
+    if (!response.ok) throw new Error(`Mercado Libre 返回 ${response.status}`);
+    const profile = await response.json().catch(() => ({}));
+    return { ok: true, message: `Mercado Libre 连接成功${profile.id ? `，Seller ID ${profile.id}` : ""}` };
+  }
+
+  async refreshToken(shop) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.refreshToken) throw new Error("缺少 refresh_token");
+    if (!credentials.apiKey || !credentials.apiSecret) throw new Error("刷新 token 需要 Client ID/API Key 和 API Secret");
+    const body = new URLSearchParams({
+      grant_type: "refresh_token",
+      client_id: credentials.apiKey,
+      client_secret: credentials.apiSecret,
+      refresh_token: credentials.refreshToken
+    });
+    const response = await fetch("https://api.mercadolibre.com/oauth/token", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+      body,
+      signal: AbortSignal.timeout(10000)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || `Mercado Libre 刷新失败 ${response.status}`);
+    if (data.access_token) shop.access_token_encrypted = encryptSecret(data.access_token);
+    if (data.refresh_token) shop.refresh_token_encrypted = encryptSecret(data.refresh_token);
+    if (data.expires_in) shop.token_expires_at = new Date(Date.now() + Number(data.expires_in) * 1000).toISOString();
+    return { ok: true, message: "Mercado Libre token 已刷新" };
+  }
+}
+
+class NoonAdapter extends MarketplaceAdapter {
+  async testConnection(shop) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.apiKey || !credentials.apiSecret) throw new Error("noon 需要 API Key 和 API Secret");
+    if (credentials.apiKey.length < 8 || credentials.apiSecret.length < 8) throw new Error("noon 密钥长度过短");
+    return { ok: true, message: "noon 密钥格式已通过，正式 API 适配器待接入" };
+  }
+}
+
+class TakealotAdapter extends MarketplaceAdapter {
+  async testConnection(shop) {
+    const credentials = getShopCredentials(shop);
+    if (!shop.seller_id) throw new Error("takealot 需要 Seller ID");
+    if (!credentials.apiKey) throw new Error("takealot 需要 API Key");
+    if (credentials.apiKey.length < 8) throw new Error("takealot API Key 长度过短");
+    return { ok: true, message: "takealot 密钥格式已通过，正式 API 适配器待接入" };
+  }
+}
+
+const marketplaceAdapters = {
+  mercadolibre: new MercadoLibreAdapter(),
+  noon: new NoonAdapter(),
+  takealot: new TakealotAdapter()
+};
+
+function getMarketplaceAdapter(platform) {
+  const adapter = marketplaceAdapters[normalizePlatformType(platform)];
+  if (!adapter) throw new Error("暂不支持该平台");
+  return adapter;
+}
+
+function getRequestOrigin(req) {
+  const proto = req.headers["x-forwarded-proto"] || "http";
+  return `${proto}://${req.headers.host}`;
+}
+
+function mercadoLibreRedirectUri(req) {
+  return `${getRequestOrigin(req)}/oauth/mercadolibre/callback`;
+}
+
+function createMercadoLibreAuthUrl(req, user, body) {
+  const clientId = String(body.client_id || body.clientId || body.api_key || body.apiKey || "").trim();
+  const clientSecret = String(body.client_secret || body.clientSecret || body.api_secret || body.apiSecret || "").trim();
+  const shopName = String(body.shop_name || body.shopName || "").trim();
+  const sellerId = String(body.seller_id || body.sellerId || "").trim();
+  if (!clientId) throw new Error("缺少 Mercado Libre Client ID / API Key");
+  if (!clientSecret) throw new Error("缺少 Mercado Libre Client Secret / API Secret");
+
+  const state = crypto.randomBytes(24).toString("hex");
+  db.oauthStates.unshift({
+    state,
+    tenant_id: getTenantId(user),
+    user_id: user.id,
+    platform: "mercadolibre",
+    shop_name: shopName,
+    seller_id: sellerId,
+    client_id_encrypted: encryptSecret(clientId),
+    client_secret_encrypted: encryptSecret(clientSecret),
+    redirect_uri: mercadoLibreRedirectUri(req),
+    created_at: nowIso(),
+    expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString()
+  });
+  db.oauthStates = db.oauthStates.slice(0, 100);
+
+  const url = new URL("https://auth.mercadolibre.com/authorization");
+  url.searchParams.set("response_type", "code");
+  url.searchParams.set("client_id", clientId);
+  url.searchParams.set("redirect_uri", mercadoLibreRedirectUri(req));
+  url.searchParams.set("state", state);
+  return { authUrl: url.toString(), state, redirectUri: mercadoLibreRedirectUri(req), expiresIn: 600 };
+}
+
+async function exchangeMercadoLibreCode(code, oauthState) {
+  const clientId = decryptSecret(oauthState.client_id_encrypted);
+  const clientSecret = decryptSecret(oauthState.client_secret_encrypted);
+  const body = new URLSearchParams({
+    grant_type: "authorization_code",
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    redirect_uri: oauthState.redirect_uri
+  });
+  const response = await fetch("https://api.mercadolibre.com/oauth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json" },
+    body,
+    signal: AbortSignal.timeout(12000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || data.error_description || `Mercado Libre 授权失败 ${response.status}`);
+  return { ...data, clientId, clientSecret };
+}
+
+async function fetchMercadoLibreProfile(accessToken) {
+  const response = await fetch("https://api.mercadolibre.com/users/me", {
+    headers: { "Authorization": `Bearer ${accessToken}`, "Accept": "application/json" },
+    signal: AbortSignal.timeout(10000)
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.message || `Mercado Libre 用户信息获取失败 ${response.status}`);
+  return data;
+}
+
+function upsertMercadoLibreShopFromOAuth(oauthState, tokenData, profile, user) {
+  const tenantId = oauthState.tenant_id;
+  const sellerId = String(profile.id || oauthState.seller_id || tokenData.user_id || "").trim();
+  const shopName = oauthState.shop_name || profile.nickname || `Mercado Libre ${sellerId}`;
+  let shop = db.shops.find((item) => getShopTenantId(item) === tenantId && item.platform === "mercadolibre" && item.seller_id === sellerId && !item.deleted_at);
+  const now = nowIso();
+  if (!shop) {
+    shop = {
+      id: createId("shop"),
+      tenant_id: tenantId,
+      platform: "mercadolibre",
+      shop_name: shopName,
+      seller_id: sellerId,
+      auth_type: "oauth",
+      access_token_encrypted: "",
+      refresh_token_encrypted: "",
+      api_key_encrypted: "",
+      api_secret_encrypted: "",
+      token_expires_at: "",
+      status: "connected",
+      last_sync_at: "",
+      last_error: "",
+      created_at: now,
+      created_by: user.id,
+      updated_at: now,
+      updated_by: user.id,
+      deleted_at: ""
+    };
+    db.shops.unshift(shop);
+    db.storeBindings.unshift({
+      id: createId("binding"),
+      tenant_id: tenantId,
+      shop_id: shop.id,
+      platform: "mercadolibre",
+      auth_type: "oauth",
+      capabilities: ["testConnection", "refreshToken", "fetchOrders", "fetchProducts", "updateStock"],
+      created_at: now,
+      updated_at: now,
+      deleted_at: ""
+    });
+  }
+
+  shop.shop_name = shopName;
+  shop.seller_id = sellerId;
+  shop.auth_type = "oauth";
+  shop.access_token_encrypted = tokenData.access_token ? encryptSecret(tokenData.access_token) : shop.access_token_encrypted;
+  shop.refresh_token_encrypted = tokenData.refresh_token ? encryptSecret(tokenData.refresh_token) : shop.refresh_token_encrypted;
+  shop.api_key_encrypted = encryptSecret(tokenData.clientId);
+  shop.api_secret_encrypted = encryptSecret(tokenData.clientSecret);
+  shop.token_expires_at = tokenData.expires_in ? new Date(Date.now() + Number(tokenData.expires_in) * 1000).toISOString() : shop.token_expires_at;
+  shop.status = "connected";
+  shop.last_error = "";
+  shop.updated_at = now;
+  shop.updated_by = user.id;
+  return shop;
+}
+
+function oauthResultPage(title, message, ok = true) {
+  const color = ok ? "#0f8a7a" : "#d74f5a";
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>${title}</title><style>
+    body{font-family:"Microsoft YaHei",Arial,sans-serif;background:#f6f8f3;color:#17211c;display:grid;place-items:center;min-height:100vh;margin:0}
+    main{width:min(520px,calc(100vw - 32px));background:white;border:1px solid #dce5df;border-radius:8px;padding:24px;box-shadow:0 14px 34px rgba(18,32,26,.08)}
+    h1{margin:0 0 12px;color:${color};font-size:24px}p{line-height:1.7}.button{display:inline-flex;margin-top:14px;padding:10px 14px;background:#0f8a7a;color:white;border-radius:8px;text-decoration:none;font-weight:700}
+  </style></head><body><main><h1>${title}</h1><p>${message}</p><a class="button" href="/">返回 ERP</a><script>setTimeout(()=>{location.href="/"},2500)</script></main></body></html>`;
+}
+
 async function handleApi(req, res, pathname) {
   try {
     if (pathname === "/api/login" && req.method === "POST") {
@@ -748,6 +1181,156 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 201, { products: productsToCreate, count: productsToCreate.length });
     }
 
+    if (pathname === "/api/shops" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const tenantId = getTenantId(session.user);
+      const shops = db.shops
+        .filter((shop) => getShopTenantId(shop) === tenantId && !shop.deleted_at)
+        .map(sanitizeShop);
+      return sendJson(res, 200, { shops });
+    }
+
+    if (pathname === "/api/shops/mercadolibre/auth-url" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const body = await readBody(req);
+      const result = createMercadoLibreAuthUrl(req, session.user, body);
+      addLog(session.user, "create_mercadolibre_auth_url", "mercadolibre", "生成 Mercado Libre 授权链接");
+      await saveDb();
+      return sendJson(res, 200, result);
+    }
+
+    if (pathname === "/api/shops" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const body = await readBody(req);
+      const shop = normalizeShopPayload(body, null, session.user);
+      applyShopSecrets(shop, body);
+      const error = validateShopPayload(shop);
+      if (error) return sendJson(res, 400, { error });
+      const secretError = assertSecretRequirements(shop, true);
+      if (secretError) return sendJson(res, 400, { error: secretError });
+      db.shops.unshift(shop);
+      db.storeBindings.unshift({
+        id: createId("binding"),
+        tenant_id: shop.tenant_id,
+        shop_id: shop.id,
+        platform: shop.platform,
+        auth_type: shop.auth_type,
+        capabilities: ["testConnection", "refreshToken", "fetchOrders", "fetchProducts", "updateStock"],
+        created_at: nowIso(),
+        updated_at: nowIso(),
+        deleted_at: ""
+      });
+      addLog(session.user, "create_shop", shop.id, `新增店铺 ${shop.shop_name}`);
+      await saveDb();
+      return sendJson(res, 201, { shop: sanitizeShop(shop) });
+    }
+
+    const shopMatch = pathname.match(/^\/api\/shops\/([^/]+)(?:\/(test-connection|refresh-token))?$/);
+    if (shopMatch && req.method === "GET" && !shopMatch[2]) {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const shop = findTenantShop(session.user, shopMatch[1]);
+      if (!shop) return sendJson(res, 404, { error: "店铺不存在" });
+      return sendJson(res, 200, { shop: sanitizeShop(shop) });
+    }
+
+    if (shopMatch && req.method === "PUT" && !shopMatch[2]) {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shop = findTenantShop(session.user, shopMatch[1]);
+      if (!shop) return sendJson(res, 404, { error: "店铺不存在" });
+      const body = await readBody(req);
+      const updated = normalizeShopPayload(body, shop, session.user);
+      applyShopSecrets(updated, body);
+      const error = validateShopPayload(updated);
+      if (error) return sendJson(res, 400, { error });
+      Object.assign(shop, updated);
+      const binding = db.storeBindings.find((item) => item.shop_id === shop.id && !item.deleted_at);
+      if (binding) {
+        binding.platform = shop.platform;
+        binding.auth_type = shop.auth_type;
+        binding.updated_at = nowIso();
+      }
+      addLog(session.user, "update_shop", shop.id, `修改店铺 ${shop.shop_name}`);
+      await saveDb();
+      return sendJson(res, 200, { shop: sanitizeShop(shop) });
+    }
+
+    if (shopMatch && req.method === "DELETE" && !shopMatch[2]) {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shop = findTenantShop(session.user, shopMatch[1]);
+      if (!shop) return sendJson(res, 404, { error: "店铺不存在" });
+      const deletedAt = nowIso();
+      shop.deleted_at = deletedAt;
+      shop.status = "disconnected";
+      shop.last_error = "店铺已删除";
+      shop.updated_at = deletedAt;
+      shop.updated_by = session.user.id;
+      const binding = db.storeBindings.find((item) => item.shop_id === shop.id && !item.deleted_at);
+      if (binding) {
+        binding.deleted_at = deletedAt;
+        binding.updated_at = deletedAt;
+        binding.updated_by = session.user.id;
+      }
+      addLog(session.user, "delete_shop", shop.id, `删除店铺 ${shop.shop_name}`);
+      await saveDb();
+      return sendJson(res, 200, { ok: true });
+    }
+
+    if (shopMatch && req.method === "POST" && shopMatch[2] === "test-connection") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shop = findTenantShop(session.user, shopMatch[1]);
+      if (!shop) return sendJson(res, 404, { error: "店铺不存在" });
+      try {
+        const result = await getMarketplaceAdapter(shop.platform).testConnection(shop);
+        shop.status = "connected";
+        shop.last_error = "";
+        shop.updated_at = nowIso();
+        shop.updated_by = session.user.id;
+        addLog(session.user, "test_shop_connection", shop.id, `测试店铺连接成功 ${shop.shop_name}`);
+        await saveDb();
+        return sendJson(res, 200, { shop: sanitizeShop(shop), result });
+      } catch (error) {
+        shop.status = "failed";
+        shop.last_error = error.message || "连接失败";
+        shop.updated_at = nowIso();
+        shop.updated_by = session.user.id;
+        addLog(session.user, "test_shop_connection_failed", shop.id, `测试店铺连接失败 ${shop.shop_name}: ${shop.last_error}`);
+        await saveDb();
+        return sendJson(res, 400, { error: shop.last_error, shop: sanitizeShop(shop) });
+      }
+    }
+
+    if (shopMatch && req.method === "POST" && shopMatch[2] === "refresh-token") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shop = findTenantShop(session.user, shopMatch[1]);
+      if (!shop) return sendJson(res, 404, { error: "店铺不存在" });
+      try {
+        const result = await getMarketplaceAdapter(shop.platform).refreshToken(shop);
+        shop.status = "connected";
+        shop.last_error = "";
+        shop.updated_at = nowIso();
+        shop.updated_by = session.user.id;
+        addLog(session.user, "refresh_shop_token", shop.id, `刷新店铺 token ${shop.shop_name}`);
+        await saveDb();
+        return sendJson(res, 200, { shop: sanitizeShop(shop), result });
+      } catch (error) {
+        shop.status = "failed";
+        shop.last_error = error.message || "刷新 token 失败";
+        shop.updated_at = nowIso();
+        shop.updated_by = session.user.id;
+        addLog(session.user, "refresh_shop_token_failed", shop.id, `刷新店铺 token 失败 ${shop.shop_name}: ${shop.last_error}`);
+        await saveDb();
+        return sendJson(res, 400, { error: shop.last_error, shop: sanitizeShop(shop) });
+      }
+    }
+
     if (pathname === "/api/collect/1688" && req.method === "POST") {
       const session = requireWritable(req, res);
       if (!session) return;
@@ -839,10 +1422,44 @@ async function serveStatic(req, res, pathname) {
   }
 }
 
+async function handleMercadoLibreCallback(req, res) {
+  const url = new URL(req.url, `http://${req.headers.host}`);
+  const code = url.searchParams.get("code");
+  const state = url.searchParams.get("state");
+  const error = url.searchParams.get("error");
+  const errorDescription = url.searchParams.get("error_description");
+
+  try {
+    if (error) throw new Error(errorDescription || error);
+    if (!code || !state) throw new Error("授权回调缺少 code 或 state");
+
+    const oauthState = db.oauthStates.find((item) => item.state === state && item.platform === "mercadolibre");
+    if (!oauthState) throw new Error("授权状态已失效，请重新发起授权");
+    if (new Date(oauthState.expires_at).getTime() < Date.now()) throw new Error("授权链接已过期，请重新发起授权");
+
+    const user = db.users.find((item) => item.id === oauthState.user_id) || db.users.find((item) => item.role === "admin");
+    if (!user) throw new Error("找不到发起授权的 ERP 用户");
+
+    const tokenData = await exchangeMercadoLibreCode(code, oauthState);
+    const profile = await fetchMercadoLibreProfile(tokenData.access_token);
+    const shop = upsertMercadoLibreShopFromOAuth(oauthState, tokenData, profile, user);
+    db.oauthStates = db.oauthStates.filter((item) => item.state !== state);
+    addLog(user, "bind_mercadolibre_shop", shop.id, `绑定 Mercado Libre 店铺 ${shop.shop_name}`);
+    await saveDb();
+
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(oauthResultPage("美客多授权成功", `店铺「${shop.shop_name}」已自动绑定，Seller ID：${shop.seller_id}。`));
+  } catch (callbackError) {
+    res.writeHead(400, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+    res.end(oauthResultPage("美客多授权失败", callbackError.message || "授权失败，请回到 ERP 重新生成授权链接。", false));
+  }
+}
+
 async function main() {
   await loadDb();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
+    if (url.pathname === "/oauth/mercadolibre/callback") return handleMercadoLibreCallback(req, res);
     if (url.pathname.startsWith("/api/")) return handleApi(req, res, url.pathname);
     serveStatic(req, res, url.pathname);
   });

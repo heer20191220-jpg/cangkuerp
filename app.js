@@ -34,12 +34,26 @@ const elements = {
   loginUsername: document.querySelector("#loginUsername"),
   loginPassword: document.querySelector("#loginPassword"),
   loginMessage: document.querySelector("#loginMessage"),
+  productsPage: document.querySelector("#productsPage"),
+  shopsPage: document.querySelector("#shopsPage"),
+  productsNavButton: document.querySelector("#productsNavButton"),
+  shopsNavButton: document.querySelector("#shopsNavButton"),
+  pageTitle: document.querySelector("#pageTitle"),
   modal: document.querySelector("#productModal"),
+  shopModal: document.querySelector("#shopModal"),
   form: document.querySelector("#productForm"),
+  shopForm: document.querySelector("#shopForm"),
   formTitle: document.querySelector("#formTitle"),
+  shopFormTitle: document.querySelector("#shopFormTitle"),
   newProductButton: document.querySelector("#newProductButton"),
+  newShopButton: document.querySelector("#newShopButton"),
   closeModalButton: document.querySelector("#closeModalButton"),
+  closeShopModalButton: document.querySelector("#closeShopModalButton"),
   cancelEditButton: document.querySelector("#cancelEditButton"),
+  cancelShopButton: document.querySelector("#cancelShopButton"),
+  testShopConnectionButton: document.querySelector("#testShopConnectionButton"),
+  refreshShopTokenButton: document.querySelector("#refreshShopTokenButton"),
+  startMercadoLibreAuthButton: document.querySelector("#startMercadoLibreAuthButton"),
   exportButton: document.querySelector("#exportButton"),
   downloadTemplateButton: document.querySelector("#downloadTemplateButton"),
   batchFileInput: document.querySelector("#batchFileInput"),
@@ -54,10 +68,13 @@ const elements = {
   clearProductsButton: document.querySelector("#clearProductsButton"),
   searchInput: document.querySelector("#searchInput"),
   productRows: document.querySelector("#productRows"),
+  shopRows: document.querySelector("#shopRows"),
   productCount: document.querySelector("#productCount"),
   userBadge: document.querySelector("#userBadge"),
   ruleLabel: document.querySelector("#ruleLabel"),
   formMessage: document.querySelector("#formMessage"),
+  shopMessage: document.querySelector("#shopMessage"),
+  shopMaskedPreview: document.querySelector("#shopMaskedPreview"),
   fields: {
     storeName: document.querySelector("#storeName"),
     customName: document.querySelector("#customName"),
@@ -74,6 +91,18 @@ const elements = {
     weight: document.querySelector("#weight"),
     price: document.querySelector("#price")
   },
+  shopFields: {
+    shopName: document.querySelector("#shopName"),
+    platformType: document.querySelector("#platformType"),
+    authType: document.querySelector("#shopAuthType"),
+    shopAccount: document.querySelector("#shopAccount"),
+    apiKey: document.querySelector("#shopApiKey"),
+    apiSecret: document.querySelector("#shopApiSecret"),
+    accessToken: document.querySelector("#shopAccessToken"),
+    refreshToken: document.querySelector("#shopRefreshToken"),
+    tokenExpiresAt: document.querySelector("#shopTokenExpiresAt"),
+    remark: document.querySelector("#shopRemark")
+  },
   output: {
     generatedEnName: document.querySelector("#generatedEnName"),
     hsCode: document.querySelector("#hsCode"),
@@ -87,7 +116,9 @@ const elements = {
 };
 
 let products = [];
+let shops = [];
 let editingId = null;
+let editingShopId = null;
 let previewTimer = null;
 let collectedVariants = [];
 let selectedVariantNames = new Set();
@@ -319,6 +350,12 @@ async function loadProducts() {
   renderProducts();
 }
 
+async function loadShops() {
+  const data = await requestApi("/api/shops");
+  shops = data.shops;
+  renderShops();
+}
+
 function renderProducts() {
   elements.productCount.textContent = `${products.length} 个产品`;
   if (products.length === 0) {
@@ -346,6 +383,60 @@ function renderProducts() {
   `).join("");
 }
 
+function renderShops() {
+  if (shops.length === 0) {
+    elements.shopRows.innerHTML = '<tr class="empty-row"><td colspan="10">暂无店铺</td></tr>';
+    return;
+  }
+
+  elements.shopRows.innerHTML = shops.map((shop) => `
+    <tr>
+      <td>${escapeHtml(shop.shop_name)}</td>
+      <td>${escapeHtml(platformLabel(shop.platform))}</td>
+      <td>${escapeHtml(shop.seller_id)}</td>
+      <td>${escapeHtml(authTypeLabel(shop.auth_type))}</td>
+      <td>${escapeHtml(shop.api_key_masked || "未填写")}</td>
+      <td>${escapeHtml(shop.access_token_masked || "未填写")}</td>
+      <td><span class="status-pill ${statusClass(shop.status)}">${escapeHtml(statusLabel(shop.status))}</span></td>
+      <td>${escapeHtml(formatDateTime(shop.last_sync_at))}</td>
+      <td>${escapeHtml(shop.last_error || "-")}</td>
+      <td>
+        <div class="row-actions">
+          <button type="button" data-shop-action="test" data-id="${shop.id}">测试</button>
+          <button type="button" data-shop-action="refresh" data-id="${shop.id}">刷新</button>
+          <button type="button" data-shop-action="edit" data-id="${shop.id}">编辑</button>
+          <button type="button" data-shop-action="delete" data-id="${shop.id}">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function statusClass(status) {
+  if (status === "connected") return "connected";
+  if (status === "failed") return "failed";
+  return "pending";
+}
+
+function statusLabel(status) {
+  return ({ disconnected: "未连接", connected: "已连接", failed: "连接失败" })[status] || "未连接";
+}
+
+function platformLabel(platform) {
+  return ({ mercadolibre: "Mercado Libre", noon: "noon", takealot: "takealot" })[platform] || platform;
+}
+
+function authTypeLabel(authType) {
+  return ({ oauth: "OAuth", api_key: "API Key", manual: "手动" })[authType] || authType;
+}
+
+function formatDateTime(value) {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("zh-CN", { hour12: false });
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -358,6 +449,23 @@ function escapeHtml(value) {
 function setMessage(message, isError = false) {
   elements.formMessage.textContent = message;
   elements.formMessage.classList.toggle("error", isError);
+}
+
+function setShopMessage(message, isError = false) {
+  elements.shopMessage.textContent = message;
+  elements.shopMessage.classList.toggle("error", isError);
+}
+
+function switchPage(page) {
+  const showShops = page === "shops";
+  elements.productsPage.classList.toggle("hidden", showShops);
+  elements.shopsPage.classList.toggle("hidden", !showShops);
+  elements.productsNavButton.classList.toggle("active", !showShops);
+  elements.shopsNavButton.classList.toggle("active", showShops);
+  elements.productsNavButton.toggleAttribute("aria-current", !showShops);
+  elements.shopsNavButton.toggleAttribute("aria-current", showShops);
+  elements.pageTitle.textContent = showShops ? "店铺管理" : "产品库";
+  if (showShops) loadShops().catch((error) => setShopMessage(error.message, true));
 }
 
 function openProductModal(product = null) {
@@ -385,6 +493,154 @@ function closeProductModal() {
   editingId = null;
   elements.modal.classList.add("hidden");
   document.body.classList.remove("modal-open");
+}
+
+function openShopModal(shop = null) {
+  elements.shopForm.reset();
+  editingShopId = shop?.id || null;
+  elements.shopFormTitle.textContent = shop ? "编辑店铺" : "新增店铺";
+  elements.shopModal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  setShopMessage("");
+
+  if (shop) {
+    elements.shopFields.shopName.value = shop.shop_name || "";
+    elements.shopFields.platformType.value = shop.platform || "mercadolibre";
+    elements.shopFields.authType.value = shop.auth_type || defaultAuthType(shop.platform);
+    elements.shopFields.shopAccount.value = shop.seller_id || "";
+    elements.shopFields.tokenExpiresAt.value = toDateTimeLocal(shop.token_expires_at);
+    elements.shopFields.remark.value = "";
+    elements.shopMaskedPreview.textContent = `当前密钥：API ${shop.api_key_masked || "未填写"} / Secret ${shop.api_secret_masked || "未填写"} / Access ${shop.access_token_masked || "未填写"} / Refresh ${shop.refresh_token_masked || "未填写"}`;
+  } else {
+    elements.shopFields.platformType.value = "mercadolibre";
+    elements.shopFields.authType.value = "oauth";
+    elements.shopMaskedPreview.textContent = "当前密钥：未填写";
+  }
+  updateShopAuthFields();
+
+  window.setTimeout(() => elements.shopFields.shopName.focus(), 0);
+}
+
+function closeShopModal() {
+  editingShopId = null;
+  elements.shopModal.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+function getShopFormInput() {
+  return {
+    shop_name: elements.shopFields.shopName.value.trim(),
+    platform: elements.shopFields.platformType.value,
+    seller_id: elements.shopFields.shopAccount.value.trim(),
+    auth_type: elements.shopFields.authType.value,
+    api_key: elements.shopFields.apiKey.value.trim(),
+    api_secret: elements.shopFields.apiSecret.value.trim(),
+    access_token: elements.shopFields.accessToken.value.trim(),
+    refresh_token: elements.shopFields.refreshToken.value.trim(),
+    token_expires_at: fromDateTimeLocal(elements.shopFields.tokenExpiresAt.value),
+    remark: elements.shopFields.remark.value.trim()
+  };
+}
+
+async function saveShop() {
+  const payload = getShopFormInput();
+  if (!editingShopId && payload.auth_type === "api_key" && !payload.api_key) throw new Error("新增 API Key 店铺必须填写 API Key");
+  if (!editingShopId && payload.auth_type === "oauth" && !payload.access_token && !payload.refresh_token) throw new Error("新增 OAuth 店铺必须填写 Access Token 或 Refresh Token");
+  let savedShop = null;
+  if (editingShopId) {
+    const data = await requestApi(`/api/shops/${editingShopId}`, { method: "PUT", body: JSON.stringify(payload) });
+    savedShop = data.shop;
+    setShopMessage("店铺已更新。");
+  } else {
+    const data = await requestApi("/api/shops", { method: "POST", body: JSON.stringify(payload) });
+    savedShop = data.shop;
+    setShopMessage("店铺已新增。");
+  }
+  closeShopModal();
+  await loadShops();
+  return savedShop;
+}
+
+async function testShopConnection(shopId = editingShopId) {
+  if (!shopId) {
+    const savedShop = await saveShop();
+    shopId = savedShop?.id;
+    if (!shopId) return;
+  }
+  elements.testShopConnectionButton.disabled = true;
+  try {
+    const data = await requestApi(`/api/shops/${shopId}/test-connection`, { method: "POST" });
+    setShopMessage(data.result?.message || "连接成功。");
+    await loadShops();
+  } catch (error) {
+    setShopMessage(error.message, true);
+    await loadShops().catch(() => {});
+  } finally {
+    elements.testShopConnectionButton.disabled = false;
+  }
+}
+
+async function refreshShopToken(shopId = editingShopId) {
+  if (!shopId) throw new Error("请先保存店铺后再刷新 token");
+  elements.refreshShopTokenButton.disabled = true;
+  try {
+    const data = await requestApi(`/api/shops/${shopId}/refresh-token`, { method: "POST" });
+    setShopMessage(data.result?.message || "Token 已刷新。");
+    await loadShops();
+  } catch (error) {
+    setShopMessage(error.message, true);
+    await loadShops().catch(() => {});
+  } finally {
+    elements.refreshShopTokenButton.disabled = false;
+  }
+}
+
+function updateShopPlatformDefaults() {
+  const platform = elements.shopFields.platformType.value;
+  if (platform === "mercadolibre") elements.shopFields.authType.value = "oauth";
+  if (["noon", "takealot"].includes(platform)) elements.shopFields.authType.value = "api_key";
+  updateShopAuthFields();
+}
+
+function updateShopAuthFields() {
+  const authType = elements.shopFields.authType.value;
+  const platform = elements.shopFields.platformType.value;
+  document.querySelectorAll("[data-auth-field]").forEach((row) => {
+    const allowed = row.dataset.authField.split(/\s+/);
+    row.classList.toggle("hidden", !allowed.includes(authType));
+  });
+  elements.refreshShopTokenButton.classList.toggle("hidden", authType !== "oauth");
+  elements.startMercadoLibreAuthButton.classList.toggle("hidden", platform !== "mercadolibre" || authType !== "oauth");
+}
+
+function defaultAuthType(platform) {
+  return platform === "mercadolibre" ? "oauth" : "api_key";
+}
+
+function toDateTimeLocal(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
+}
+
+function fromDateTimeLocal(value) {
+  return value ? new Date(value).toISOString() : "";
+}
+
+async function startMercadoLibreAuthorization() {
+  const payload = getShopFormInput();
+  if (payload.platform !== "mercadolibre") throw new Error("只有 Mercado Libre 店铺需要 OAuth 授权");
+  if (!payload.api_key) throw new Error("请先填写 Mercado Libre Client ID / API Key");
+  if (!payload.api_secret) throw new Error("请先填写 Mercado Libre Client Secret / API Secret");
+
+  const data = await requestApi("/api/shops/mercadolibre/auth-url", {
+    method: "POST",
+    body: JSON.stringify(payload)
+  });
+  window.open(data.authUrl, "_blank", "noopener,noreferrer");
+  setShopMessage(`授权链接已打开。若浏览器拦截弹窗，请复制回调地址到 Mercado Libre 应用：${data.redirectUri}`);
 }
 
 function fillForm(product) {
@@ -568,14 +824,23 @@ elements.logoutButton.addEventListener("click", async () => {
   showLogin();
 });
 
+elements.productsNavButton.addEventListener("click", () => switchPage("products"));
+elements.shopsNavButton.addEventListener("click", () => switchPage("shops"));
 elements.newProductButton.addEventListener("click", () => openProductModal());
+elements.newShopButton.addEventListener("click", () => openShopModal());
 elements.closeModalButton.addEventListener("click", closeProductModal);
+elements.closeShopModalButton.addEventListener("click", closeShopModal);
 elements.cancelEditButton.addEventListener("click", closeProductModal);
+elements.cancelShopButton.addEventListener("click", closeShopModal);
 elements.modal.addEventListener("click", (event) => {
   if (event.target.matches("[data-close-modal]")) closeProductModal();
 });
+elements.shopModal.addEventListener("click", (event) => {
+  if (event.target.matches("[data-close-shop-modal]")) closeShopModal();
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !elements.modal.classList.contains("hidden")) closeProductModal();
+  if (event.key === "Escape" && !elements.shopModal.classList.contains("hidden")) closeShopModal();
 });
 
 elements.form.addEventListener("submit", async (event) => {
@@ -593,6 +858,42 @@ elements.form.addEventListener("submit", async (event) => {
     await loadProducts();
   } catch (error) {
     setMessage(error.message, true);
+  }
+});
+
+elements.shopForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await saveShop();
+  } catch (error) {
+    setShopMessage(error.message, true);
+  }
+});
+
+elements.shopFields.platformType.addEventListener("change", updateShopPlatformDefaults);
+elements.shopFields.authType.addEventListener("change", updateShopAuthFields);
+
+elements.testShopConnectionButton.addEventListener("click", async () => {
+  try {
+    await testShopConnection(editingShopId);
+  } catch (error) {
+    setShopMessage(error.message, true);
+  }
+});
+
+elements.refreshShopTokenButton.addEventListener("click", async () => {
+  try {
+    await refreshShopToken(editingShopId);
+  } catch (error) {
+    setShopMessage(error.message, true);
+  }
+});
+
+elements.startMercadoLibreAuthButton.addEventListener("click", async () => {
+  try {
+    await startMercadoLibreAuthorization();
+  } catch (error) {
+    setShopMessage(error.message, true);
   }
 });
 
@@ -617,6 +918,55 @@ elements.productRows.addEventListener("click", async (event) => {
   }
 });
 
+elements.shopRows.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-shop-action]");
+  if (!button) return;
+  const shop = shops.find((item) => item.id === button.dataset.id);
+  if (!shop) return;
+
+  if (button.dataset.shopAction === "edit") {
+    openShopModal(shop);
+    return;
+  }
+
+  if (button.dataset.shopAction === "test") {
+    try {
+      setShopMessage("正在测试连接...");
+      const data = await requestApi(`/api/shops/${shop.id}/test-connection`, { method: "POST" });
+      setShopMessage(data.result?.message || "连接成功。");
+      await loadShops();
+    } catch (error) {
+      setShopMessage(error.message, true);
+      await loadShops().catch(() => {});
+    }
+    return;
+  }
+
+  if (button.dataset.shopAction === "refresh") {
+    try {
+      setShopMessage("正在刷新 token...");
+      const data = await requestApi(`/api/shops/${shop.id}/refresh-token`, { method: "POST" });
+      setShopMessage(data.result?.message || "Token 已刷新。");
+      await loadShops();
+    } catch (error) {
+      setShopMessage(error.message, true);
+      await loadShops().catch(() => {});
+    }
+    return;
+  }
+
+  if (button.dataset.shopAction === "delete") {
+    if (!window.confirm(`确认删除店铺「${shop.shop_name}」吗？密钥绑定会一起停用。`)) return;
+    try {
+      await requestApi(`/api/shops/${shop.id}`, { method: "DELETE" });
+      setShopMessage("店铺已删除。");
+      await loadShops();
+    } catch (error) {
+      setShopMessage(error.message, true);
+    }
+  }
+});
+
 elements.searchInput.addEventListener("input", () => {
   window.clearTimeout(elements.searchInput.searchTimer);
   elements.searchInput.searchTimer = window.setTimeout(loadProducts, 250);
@@ -633,6 +983,7 @@ async function boot() {
     const data = await requestApi("/api/me");
     showApp(data.user);
     await loadProducts();
+    await loadShops();
   } catch {
     showLogin();
   }

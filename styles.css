@@ -604,6 +604,10 @@ table {
   border-collapse: collapse;
 }
 
+.shops-table {
+  min-width: 1320px;
+}
+
 th,
 td {
   padding: 13px 12px;
@@ -646,6 +650,82 @@ tbody tr:hover td {
   border-radius: 8px;
   font-size: 13px;
   font-weight: 700;
+}
+
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.status-pill.connected {
+  color: #0a695e;
+  background: #dff3ec;
+  border: 1px solid #b8e2d6;
+}
+
+.status-pill.failed {
+  color: #9d2732;
+  background: #ffecef;
+  border: 1px solid #f3c1c8;
+}
+
+.status-pill.pending {
+  color: #7a5314;
+  background: #fff4d9;
+  border: 1px solid #ecd39a;
+}
+
+.status-note {
+  margin: 5px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.shop-modal-panel {
+  width: min(760px, 100%);
+}
+
+.modal-body.single-column {
+  grid-template-columns: 1fr;
+}
+
+.shop-secret-hint {
+  margin-top: 14px;
+  padding: 12px;
+  background: #fbfcfa;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
+.shop-secret-hint strong {
+  display: block;
+  margin-bottom: 5px;
+  font-size: 14px;
+}
+
+.shop-secret-hint p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.shop-secret-hint code {
+  padding: 2px 5px;
+  color: var(--teal-dark);
+  background: var(--mint);
+  border-radius: 6px;
+  font-family: Consolas, monospace;
+  font-size: 12px;
+}
+
+.credential-row.hidden {
+  display: none;
 }
 
 .muted-cell {

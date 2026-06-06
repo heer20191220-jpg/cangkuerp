@@ -6,7 +6,8 @@
       "displayName": "管理员",
       "role": "admin",
       "passwordHash": "240be518fabd2724ddb6f04eeb1da5967448d7e831c08c8fa822809f74c720a9",
-      "createdAt": "2026-06-02T15:10:58.307Z"
+      "createdAt": "2026-06-02T15:10:58.307Z",
+      "tenantId": "tenant_default"
     },
     {
       "id": "user_entry",
@@ -14,59 +15,11 @@
       "displayName": "录入员",
       "role": "operator",
       "passwordHash": "8d969eef6ecad3c29a3a629280e686cf0c3f5d5a86aff3ca12020c923adc6c92",
-      "createdAt": "2026-06-02T15:10:58.307Z"
+      "createdAt": "2026-06-02T15:10:58.307Z",
+      "tenantId": "tenant_default"
     }
   ],
-  "sessions": [
-    {
-      "token": "3efb67e0f5cf8876dfa8d51d3db1359fbba48ec23be4c8630535bfb5b115d1f4",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T07:58:02.401Z",
-      "expiresAt": "2026-06-04T15:58:02.401Z"
-    },
-    {
-      "token": "0aa206618dc4a14a83376d6d667730decb237ba067593608eb0651bd87533ad8",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:04:54.215Z",
-      "expiresAt": "2026-06-04T16:04:54.216Z"
-    },
-    {
-      "token": "22c518484bfaf8a22da8a9ad695d4badf22b7f39661cfe90f0086409d50b834b",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:26:18.864Z",
-      "expiresAt": "2026-06-04T16:26:18.866Z"
-    },
-    {
-      "token": "945aac7e9e5095ebc8fee9c1cc3299611831e402a31b164107ab2f94d2dd1e15",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:26:46.385Z",
-      "expiresAt": "2026-06-04T16:26:46.386Z"
-    },
-    {
-      "token": "917a409e0e40e8ae5b29bd43c15825e83cf86a69b3502a737522a8179dc762ac",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:27:55.445Z",
-      "expiresAt": "2026-06-04T16:27:55.446Z"
-    },
-    {
-      "token": "9c169790717ee0e9c4dfed30468ec59aceb1b90c4af0c2d69d33055b3746a525",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:53:42.761Z",
-      "expiresAt": "2026-06-04T16:53:42.762Z"
-    },
-    {
-      "token": "b4e7c614ed7a610a065fa7dc44b20e064c2034d17929ee291de5fe3b4c52a7e6",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:54:11.532Z",
-      "expiresAt": "2026-06-04T16:54:11.533Z"
-    },
-    {
-      "token": "e6cc5675dd79f542cb71ce49ea0357f0f402d12b172ec304ca89f0ffb0c37758",
-      "userId": "user_admin",
-      "createdAt": "2026-06-04T08:54:35.067Z",
-      "expiresAt": "2026-06-04T16:54:35.069Z"
-    }
-  ],
+  "sessions": [],
   "products": [
     {
       "id": "prod_28f62e24-d816-403f-baac-61e07f3a7003",
@@ -670,5 +623,8 @@
       "detail": "新增商品 KJ4-派对礼物50ml玻璃空容器12pk",
       "createdAt": "2026-06-03T09:31:32.725Z"
     }
-  ]
+  ],
+  "shops": [],
+  "storeBindings": [],
+  "oauthStates": []
 }
