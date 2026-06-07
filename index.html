@@ -51,6 +51,10 @@
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 9h18l-2-5H5L3 9Z"/><path d="M5 9v11h14V9"/><path d="M9 20v-6h6v6"/></svg>
           <span>店铺管理</span>
         </button>
+        <button class="nav-item" id="domesticShipmentsNavButton" type="button" title="国内发货">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 7h11v10H3z"/><path d="M14 10h4l3 3v4h-7z"/><path d="M7 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/><path d="M18 20a2 2 0 1 0 0-4 2 2 0 0 0 0 4Z"/></svg>
+          <span>国内发货</span>
+        </button>
       </nav>
     </aside>
 
@@ -139,7 +143,127 @@
           </table>
         </div>
       </section>
+
+      <section class="panel product-center hidden" id="domesticShipmentsPage" aria-label="国内发货">
+        <div class="library-toolbar primary-toolbar">
+          <div>
+            <h2>国内发货</h2>
+            <p class="panel-subtitle">新增发货单后用表格录入箱子，系统自动计算 CBM、计费重，并按产品中文名匹配产品资料。</p>
+          </div>
+          <div class="table-tools">
+            <button class="primary-button" id="newDomesticShipmentButton" type="button">新增发货单</button>
+          </div>
+        </div>
+
+        <p id="domesticShipmentMessage" class="form-message library-message"></p>
+
+        <div class="table-wrap">
+          <table class="shipments-table">
+            <thead>
+              <tr>
+                <th>发货时间</th>
+                <th>店铺名</th>
+                <th>物流商</th>
+                <th>物流方式</th>
+                <th>物流单号</th>
+                <th>箱数</th>
+                <th>产品数</th>
+                <th>总 CBM</th>
+                <th>总计费重</th>
+                <th>最后更新</th>
+                <th>操作</th>
+              </tr>
+            </thead>
+            <tbody id="domesticShipmentRows"><tr class="empty-row"><td colspan="11">暂无发货单</td></tr></tbody>
+          </table>
+        </div>
+      </section>
     </main>
+  </div>
+
+  <div id="domesticShipmentModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="domesticShipmentFormTitle">
+    <div class="modal-backdrop" data-close-domestic-shipment-modal></div>
+    <section class="modal-panel shipment-modal-panel">
+      <div class="modal-heading">
+        <h2 id="domesticShipmentFormTitle">新增发货单</h2>
+        <button class="icon-button" id="closeDomesticShipmentModalButton" type="button" title="关闭">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+        </button>
+      </div>
+
+      <form id="domesticShipmentForm" autocomplete="off">
+        <div class="modal-body single-column shipment-modal-body">
+          <div class="form-row four">
+            <label class="field"><span>发货时间</span><input id="domesticShipmentShippedAt" name="domesticShipmentShippedAt" type="date"></label>
+            <label class="field"><span>物流商</span><input id="domesticShipmentLogisticsProvider" name="domesticShipmentLogisticsProvider" type="text" placeholder="例如：递四方" required></label>
+            <label class="field"><span>物流方式</span><select id="domesticShipmentLogisticsMethod" name="domesticShipmentLogisticsMethod" required>
+              <option value="air">空运</option>
+              <option value="sea">海运</option>
+            </select></label>
+            <label class="field"><span>发货人</span><input id="domesticShipmentShipper" name="domesticShipmentShipper" type="text" required></label>
+          </div>
+          <div class="form-row four">
+            <label class="field"><span>店铺名</span><input id="domesticShipmentStoreName" name="domesticShipmentStoreName" type="text" required></label>
+            <label class="field"><span>物流单号</span><input id="domesticShipmentTrackingNo" name="domesticShipmentTrackingNo" type="text"></label>
+            <label class="field"><span>自定义单号</span><input id="domesticShipmentCustomNo" name="domesticShipmentCustomNo" type="text"></label>
+            <label class="field"><span>平台货件号</span><input id="domesticShipmentPlatformShipmentNo" name="domesticShipmentPlatformShipmentNo" type="text"></label>
+          </div>
+
+          <div class="shipment-summary" id="domesticShipmentSummary">
+            <span>箱数：0</span>
+            <span>总 CBM：0</span>
+            <span>总实重：0 kg</span>
+            <span>总计费重：0 kg</span>
+          </div>
+
+          <div class="table-wrap shipment-line-wrap">
+            <table class="shipment-line-table">
+              <colgroup>
+                <col class="col-box">
+                <col class="col-type">
+                <col class="col-dim">
+                <col class="col-dim">
+                <col class="col-dim">
+                <col class="col-weight">
+                <col class="col-cbm">
+                <col class="col-charge">
+                <col class="col-product">
+                <col class="col-qty">
+                <col class="col-match">
+                <col class="col-action">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th>箱号</th>
+                  <th>类型</th>
+                  <th>长 cm</th>
+                  <th>宽 cm</th>
+                  <th>高 cm</th>
+                  <th>实重 kg</th>
+                  <th>CBM</th>
+                  <th>计费重 kg</th>
+                  <th>产品中文名</th>
+                  <th>数量</th>
+                  <th>匹配资料</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="domesticShipmentLineRows"></tbody>
+            </table>
+          </div>
+          <div class="table-tools">
+            <button class="ghost-button" id="addDomesticShipmentBoxButton" type="button">新增箱</button>
+            <button class="ghost-button" id="addDomesticShipmentProductButton" type="button">新增产品</button>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button class="ghost-button" id="exportDomesticShipmentButton" type="button">导出箱单</button>
+          <button class="ghost-button" id="cancelDomesticShipmentButton" type="button">取消</button>
+          <button class="primary-button" type="submit">保存发货单</button>
+        </div>
+      </form>
+    </section>
   </div>
 
   <div id="shopModal" class="modal hidden" role="dialog" aria-modal="true" aria-labelledby="shopFormTitle">

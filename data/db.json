@@ -588,6 +588,15 @@
   ],
   "logs": [
     {
+      "id": "log_a2874ab1-fa54-4ff8-a6f3-54441a0ff2a7",
+      "userId": "user_admin",
+      "username": "admin",
+      "action": "create_domestic_shipment",
+      "targetId": "shipment_72e52448-fb33-49bc-b4d9-46fc000f013d",
+      "detail": "新增国内发货单 DS1780844356802",
+      "createdAt": "2026-06-07T14:59:16.802Z"
+    },
+    {
       "id": "log_755a73d3-20f3-4e96-b310-74c30ab21eff",
       "userId": "user_admin",
       "username": "admin",
@@ -626,5 +635,77 @@
   ],
   "shops": [],
   "storeBindings": [],
-  "oauthStates": []
+  "oauthStates": [],
+  "domesticShipments": [
+    {
+      "id": "shipment_72e52448-fb33-49bc-b4d9-46fc000f013d",
+      "tenantId": "tenant_default",
+      "shipmentNo": "DS1780844356802",
+      "shippedAt": "2026-06-07T14:58:00.000Z",
+      "logisticsProvider": "快易速达",
+      "logisticsMethod": "air",
+      "shipper": "www",
+      "storeName": "kj4",
+      "trackingNo": "111",
+      "customNo": "11",
+      "platformShipmentNo": "11",
+      "title": "11",
+      "status": "draft",
+      "receiver": "",
+      "address": "",
+      "remark": "",
+      "lines": [
+        {
+          "id": "local_1780844320182_e73b7e9a208968",
+          "lineType": "box",
+          "boxNo": "1",
+          "productNameZh": "派对礼物50ml玻璃空容器12pk",
+          "productId": "prod_b67d3e9c-3017-4d1a-b83b-1170904fd029",
+          "matchedProduct": {
+            "id": "prod_b67d3e9c-3017-4d1a-b83b-1170904fd029",
+            "customName": "派对礼物50ml玻璃空容器12pk",
+            "declarationName": "KJ4-派对礼物50ml玻璃空容器12pk",
+            "zhName": "玻璃瓶",
+            "enName": "General Merchandise",
+            "materialZh": "玻璃",
+            "materialEn": "To Be Confirmed",
+            "useZh": "收纳",
+            "useEn": "For Storage",
+            "category": "普货",
+            "hsCode": "7010909000",
+            "hsLabel": "玻璃制容器"
+          },
+          "declarationName": "KJ4-派对礼物50ml玻璃空容器12pk",
+          "zhName": "玻璃瓶",
+          "enName": "General Merchandise",
+          "materialZh": "玻璃",
+          "materialEn": "To Be Confirmed",
+          "useZh": "收纳",
+          "useEn": "For Storage",
+          "category": "普货",
+          "hsCode": "7010909000",
+          "hsLabel": "玻璃制容器",
+          "length": 10,
+          "width": 10,
+          "height": 10,
+          "actualWeight": 1,
+          "volumeCbm": 0.001,
+          "volumeWeight": 0.17,
+          "chargeWeight": 1,
+          "remark": ""
+        }
+      ],
+      "boxCount": 1,
+      "productCount": 1,
+      "totalCbm": 0.001,
+      "totalActualWeight": 1,
+      "totalVolumeWeight": 0.17,
+      "totalChargeWeight": 1,
+      "createdAt": "2026-06-07T14:59:16.801Z",
+      "createdBy": "user_admin",
+      "updatedAt": "2026-06-07T14:59:16.801Z",
+      "updatedBy": "user_admin",
+      "deletedAt": ""
+    }
+  ]
 }

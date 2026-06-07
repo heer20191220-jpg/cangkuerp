@@ -36,21 +36,32 @@ const elements = {
   loginMessage: document.querySelector("#loginMessage"),
   productsPage: document.querySelector("#productsPage"),
   shopsPage: document.querySelector("#shopsPage"),
+  domesticShipmentsPage: document.querySelector("#domesticShipmentsPage"),
   productsNavButton: document.querySelector("#productsNavButton"),
   shopsNavButton: document.querySelector("#shopsNavButton"),
+  domesticShipmentsNavButton: document.querySelector("#domesticShipmentsNavButton"),
   pageTitle: document.querySelector("#pageTitle"),
   modal: document.querySelector("#productModal"),
   shopModal: document.querySelector("#shopModal"),
+  domesticShipmentModal: document.querySelector("#domesticShipmentModal"),
   form: document.querySelector("#productForm"),
   shopForm: document.querySelector("#shopForm"),
+  domesticShipmentForm: document.querySelector("#domesticShipmentForm"),
   formTitle: document.querySelector("#formTitle"),
   shopFormTitle: document.querySelector("#shopFormTitle"),
+  domesticShipmentFormTitle: document.querySelector("#domesticShipmentFormTitle"),
   newProductButton: document.querySelector("#newProductButton"),
   newShopButton: document.querySelector("#newShopButton"),
+  newDomesticShipmentButton: document.querySelector("#newDomesticShipmentButton"),
   closeModalButton: document.querySelector("#closeModalButton"),
   closeShopModalButton: document.querySelector("#closeShopModalButton"),
+  closeDomesticShipmentModalButton: document.querySelector("#closeDomesticShipmentModalButton"),
   cancelEditButton: document.querySelector("#cancelEditButton"),
   cancelShopButton: document.querySelector("#cancelShopButton"),
+  cancelDomesticShipmentButton: document.querySelector("#cancelDomesticShipmentButton"),
+  addDomesticShipmentBoxButton: document.querySelector("#addDomesticShipmentBoxButton"),
+  addDomesticShipmentProductButton: document.querySelector("#addDomesticShipmentProductButton"),
+  exportDomesticShipmentButton: document.querySelector("#exportDomesticShipmentButton"),
   testShopConnectionButton: document.querySelector("#testShopConnectionButton"),
   refreshShopTokenButton: document.querySelector("#refreshShopTokenButton"),
   startMercadoLibreAuthButton: document.querySelector("#startMercadoLibreAuthButton"),
@@ -69,11 +80,15 @@ const elements = {
   searchInput: document.querySelector("#searchInput"),
   productRows: document.querySelector("#productRows"),
   shopRows: document.querySelector("#shopRows"),
+  domesticShipmentRows: document.querySelector("#domesticShipmentRows"),
+  domesticShipmentLineRows: document.querySelector("#domesticShipmentLineRows"),
+  domesticShipmentSummary: document.querySelector("#domesticShipmentSummary"),
   productCount: document.querySelector("#productCount"),
   userBadge: document.querySelector("#userBadge"),
   ruleLabel: document.querySelector("#ruleLabel"),
   formMessage: document.querySelector("#formMessage"),
   shopMessage: document.querySelector("#shopMessage"),
+  domesticShipmentMessage: document.querySelector("#domesticShipmentMessage"),
   shopMaskedPreview: document.querySelector("#shopMaskedPreview"),
   fields: {
     storeName: document.querySelector("#storeName"),
@@ -103,6 +118,16 @@ const elements = {
     tokenExpiresAt: document.querySelector("#shopTokenExpiresAt"),
     remark: document.querySelector("#shopRemark")
   },
+  domesticShipmentFields: {
+    shippedAt: document.querySelector("#domesticShipmentShippedAt"),
+    logisticsProvider: document.querySelector("#domesticShipmentLogisticsProvider"),
+    logisticsMethod: document.querySelector("#domesticShipmentLogisticsMethod"),
+    shipper: document.querySelector("#domesticShipmentShipper"),
+    storeName: document.querySelector("#domesticShipmentStoreName"),
+    trackingNo: document.querySelector("#domesticShipmentTrackingNo"),
+    customNo: document.querySelector("#domesticShipmentCustomNo"),
+    platformShipmentNo: document.querySelector("#domesticShipmentPlatformShipmentNo")
+  },
   output: {
     generatedEnName: document.querySelector("#generatedEnName"),
     hsCode: document.querySelector("#hsCode"),
@@ -117,8 +142,11 @@ const elements = {
 
 let products = [];
 let shops = [];
+let domesticShipments = [];
+let shipmentLines = [];
 let editingId = null;
 let editingShopId = null;
+let editingDomesticShipmentId = null;
 let previewTimer = null;
 let collectedVariants = [];
 let selectedVariantNames = new Set();
@@ -356,6 +384,12 @@ async function loadShops() {
   renderShops();
 }
 
+async function loadDomesticShipments() {
+  const data = await requestApi("/api/domestic-shipments");
+  domesticShipments = data.shipments;
+  renderDomesticShipments();
+}
+
 function renderProducts() {
   elements.productCount.textContent = `${products.length} 个产品`;
   if (products.length === 0) {
@@ -377,6 +411,35 @@ function renderProducts() {
         <div class="row-actions">
           <button type="button" data-action="edit" data-id="${product.id}">编辑</button>
           <button type="button" data-action="delete" data-id="${product.id}">删除</button>
+        </div>
+      </td>
+    </tr>
+  `).join("");
+}
+
+function renderDomesticShipments() {
+  if (domesticShipments.length === 0) {
+    elements.domesticShipmentRows.innerHTML = '<tr class="empty-row"><td colspan="11">暂无发货单</td></tr>';
+    return;
+  }
+
+  elements.domesticShipmentRows.innerHTML = domesticShipments.map((shipment) => `
+    <tr>
+      <td>${escapeHtml(formatDateOnly(shipment.shippedAt))}</td>
+      <td>${escapeHtml(shipment.storeName || "-")}</td>
+      <td>${escapeHtml(shipment.logisticsProvider || "-")}</td>
+      <td>${escapeHtml(shipment.logisticsMethod === "sea" ? "海运" : "空运")}</td>
+      <td>${escapeHtml(shipment.trackingNo || shipment.customNo || shipment.platformShipmentNo || "-")}</td>
+      <td>${Number(shipment.boxCount || 0)}</td>
+      <td>${Number(shipment.productCount || 0)}</td>
+      <td>${Number(shipment.totalCbm || 0).toFixed(6)}</td>
+      <td>${Number(shipment.totalChargeWeight || 0).toFixed(2)} kg</td>
+      <td>${escapeHtml(formatDateTime(shipment.updatedAt))}</td>
+      <td>
+        <div class="row-actions">
+          <button type="button" data-shipment-action="export" data-id="${shipment.id}">导出</button>
+          <button type="button" data-shipment-action="edit" data-id="${shipment.id}">编辑</button>
+          <button type="button" data-shipment-action="delete" data-id="${shipment.id}">删除</button>
         </div>
       </td>
     </tr>
@@ -437,6 +500,14 @@ function formatDateTime(value) {
   return date.toLocaleString("zh-CN", { hour12: false });
 }
 
+function formatDateOnly(value) {
+  if (!value) return "-";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("zh-CN");
+}
+
 function escapeHtml(value) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -456,16 +527,27 @@ function setShopMessage(message, isError = false) {
   elements.shopMessage.classList.toggle("error", isError);
 }
 
+function setDomesticShipmentMessage(message, isError = false) {
+  elements.domesticShipmentMessage.textContent = message;
+  elements.domesticShipmentMessage.classList.toggle("error", isError);
+}
+
 function switchPage(page) {
+  const showProducts = page === "products";
   const showShops = page === "shops";
-  elements.productsPage.classList.toggle("hidden", showShops);
+  const showDomesticShipments = page === "domesticShipments";
+  elements.productsPage.classList.toggle("hidden", !showProducts);
   elements.shopsPage.classList.toggle("hidden", !showShops);
-  elements.productsNavButton.classList.toggle("active", !showShops);
+  elements.domesticShipmentsPage.classList.toggle("hidden", !showDomesticShipments);
+  elements.productsNavButton.classList.toggle("active", showProducts);
   elements.shopsNavButton.classList.toggle("active", showShops);
-  elements.productsNavButton.toggleAttribute("aria-current", !showShops);
+  elements.domesticShipmentsNavButton.classList.toggle("active", showDomesticShipments);
+  elements.productsNavButton.toggleAttribute("aria-current", showProducts);
   elements.shopsNavButton.toggleAttribute("aria-current", showShops);
-  elements.pageTitle.textContent = showShops ? "店铺管理" : "产品库";
+  elements.domesticShipmentsNavButton.toggleAttribute("aria-current", showDomesticShipments);
+  elements.pageTitle.textContent = showShops ? "店铺管理" : showDomesticShipments ? "国内发货" : "产品库";
   if (showShops) loadShops().catch((error) => setShopMessage(error.message, true));
+  if (showDomesticShipments) loadDomesticShipments().catch((error) => setDomesticShipmentMessage(error.message, true));
 }
 
 function openProductModal(product = null) {
@@ -525,6 +607,225 @@ function closeShopModal() {
   editingShopId = null;
   elements.shopModal.classList.add("hidden");
   document.body.classList.remove("modal-open");
+}
+
+function createEmptyShipmentLine(index = shipmentLines.length, lineType = "box", baseLine = null) {
+  const base = baseLine || {};
+  return {
+    id: `local_${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    lineType,
+    boxNo: String(base.boxNo || index + 1),
+    productNameZh: "",
+    quantity: lineType === "product" ? 1 : "",
+    length: base.length || "",
+    width: base.width || "",
+    height: base.height || "",
+    actualWeight: base.actualWeight || "",
+    volumeCbm: 0,
+    volumeWeight: 0,
+    chargeWeight: 0,
+    matchedProduct: null,
+    productId: "",
+    declarationName: "",
+    enName: "",
+    materialZh: "",
+    useZh: "",
+    hsCode: "",
+    remark: ""
+  };
+}
+
+function calculateShipmentLine(line) {
+  const length = toNumber(line.length);
+  const width = toNumber(line.width);
+  const height = toNumber(line.height);
+  const actualWeight = toNumber(line.actualWeight);
+  const volumeCbm = length * width * height / 1000000;
+  const volumeWeight = length * width * height / VOLUME_DIVISOR;
+  return {
+    ...line,
+    lineType: line.lineType === "product" ? "product" : "box",
+    quantity: line.quantity === "" || line.quantity === undefined ? "" : Math.max(0, toNumber(line.quantity)),
+    volumeCbm: round(volumeCbm, 6),
+    volumeWeight: round(volumeWeight, 2),
+    chargeWeight: round(Math.max(actualWeight, volumeWeight), 2)
+  };
+}
+
+function findLocalProductMatch(value) {
+  const query = String(value || "").trim().replace(/\s+/g, "").toLowerCase();
+  if (!query) return null;
+  const scored = products.map((product) => {
+    const fields = [product.zhName, product.customName, product.declarationName, product.storeName]
+      .map((item) => String(item || "").trim().replace(/\s+/g, "").toLowerCase())
+      .filter(Boolean);
+    let score = 0;
+    for (const field of fields) {
+      if (field === query) score = Math.max(score, 100);
+      else if (field.includes(query)) score = Math.max(score, 80);
+      else if (query.includes(field)) score = Math.max(score, Math.min(70, field.length * 3));
+    }
+    return { product, score };
+  }).filter((item) => item.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.product || null;
+}
+
+function applyProductToShipmentLine(line, product) {
+  if (!product) {
+    return {
+      ...line,
+      productId: "",
+      matchedProduct: null,
+      declarationName: line.productNameZh || "",
+      enName: "",
+      materialZh: "",
+      useZh: "",
+      hsCode: ""
+    };
+  }
+  return {
+    ...line,
+    productId: product.id,
+    matchedProduct: product,
+    declarationName: product.declarationName || product.customName || line.productNameZh,
+    enName: product.enName || "",
+    materialZh: product.materialZh || "",
+    useZh: product.useZh || "",
+    hsCode: product.hsCode || ""
+  };
+}
+
+function syncBoxDataToProductLines(sourceLine) {
+  shipmentLines = shipmentLines.map((line) => {
+    if (line === sourceLine || line.lineType !== "product" || String(line.boxNo) !== String(sourceLine.boxNo)) return line;
+    return {
+      ...line,
+      length: sourceLine.length,
+      width: sourceLine.width,
+      height: sourceLine.height,
+      actualWeight: sourceLine.actualWeight
+    };
+  });
+}
+
+function updateShipmentSummary() {
+  const lines = shipmentLines.map(calculateShipmentLine);
+  const boxes = new Map();
+  for (const line of lines) {
+    const key = String(line.boxNo || "").trim() || line.id;
+    if (!boxes.has(key)) boxes.set(key, line);
+  }
+  const boxLines = [...boxes.values()];
+  const totalCbm = boxLines.reduce((sum, line) => sum + toNumber(line.volumeCbm), 0);
+  const totalActualWeight = boxLines.reduce((sum, line) => sum + toNumber(line.actualWeight), 0);
+  const totalChargeWeight = boxLines.reduce((sum, line) => sum + toNumber(line.chargeWeight), 0);
+  elements.domesticShipmentSummary.innerHTML = `
+    <span>箱数：${boxLines.length}</span>
+    <span>产品：${lines.filter((line) => line.productNameZh).length}</span>
+    <span>总 CBM：${round(totalCbm, 6)}</span>
+    <span>总实重：${round(totalActualWeight, 3)} kg</span>
+    <span>总计费重：${round(totalChargeWeight, 2)} kg</span>
+  `;
+}
+
+function renderShipmentLines() {
+  if (shipmentLines.length === 0) shipmentLines = [createEmptyShipmentLine(0)];
+  elements.domesticShipmentLineRows.innerHTML = shipmentLines.map((line, index) => {
+    const calculated = calculateShipmentLine(line);
+    const isProductLine = calculated.lineType === "product";
+    const matchText = calculated.productId
+      ? `${calculated.declarationName || calculated.productNameZh} / ${calculated.hsCode || "无编码"}`
+      : "未匹配";
+    return `
+      <tr data-line-index="${index}">
+        <td><input class="table-input box-no" data-line-field="boxNo" value="${escapeHtml(calculated.boxNo)}" ${isProductLine ? "readonly" : ""}></td>
+        <td><span class="line-type-pill ${isProductLine ? "product" : "box"}">${isProductLine ? "产品" : "箱"}</span></td>
+        <td>${isProductLine ? '<span class="same-box-cell">同箱</span>' : `<input class="table-input dim" data-line-field="length" type="number" min="0" step="0.01" value="${escapeHtml(calculated.length)}">`}</td>
+        <td>${isProductLine ? '<span class="same-box-cell">同箱</span>' : `<input class="table-input dim" data-line-field="width" type="number" min="0" step="0.01" value="${escapeHtml(calculated.width)}">`}</td>
+        <td>${isProductLine ? '<span class="same-box-cell">同箱</span>' : `<input class="table-input dim" data-line-field="height" type="number" min="0" step="0.01" value="${escapeHtml(calculated.height)}">`}</td>
+        <td>${isProductLine ? '<span class="same-box-cell">同箱</span>' : `<input class="table-input weight" data-line-field="actualWeight" type="number" min="0" step="0.001" value="${escapeHtml(calculated.actualWeight)}">`}</td>
+        <td>${isProductLine ? '<span class="same-box-cell">同箱</span>' : Number(calculated.volumeCbm || 0).toFixed(6)}</td>
+        <td>${isProductLine ? '<span class="same-box-cell">同箱</span>' : Number(calculated.chargeWeight || 0).toFixed(2)}</td>
+        <td><input class="table-input product-name" data-line-field="productNameZh" value="${escapeHtml(calculated.productNameZh)}" placeholder="${isProductLine ? "输入产品中文名" : "可填箱内主产品"}"></td>
+        <td><input class="table-input qty" data-line-field="quantity" type="number" min="0" step="1" value="${escapeHtml(calculated.quantity ?? "")}" placeholder="数量"></td>
+        <td><span class="match-pill ${calculated.productId ? "matched" : ""}" title="${escapeHtml(matchText)}">${escapeHtml(matchText)}</span></td>
+        <td><button class="ghost-button compact" type="button" data-remove-line="${index}">删除</button></td>
+      </tr>
+    `;
+  }).join("");
+  updateShipmentSummary();
+}
+
+function openDomesticShipmentModal(shipment = null) {
+  elements.domesticShipmentForm.reset();
+  editingDomesticShipmentId = shipment?.id || null;
+  elements.domesticShipmentFormTitle.textContent = shipment ? "编辑发货单" : "新增发货单";
+  elements.domesticShipmentFields.shippedAt.value = toDateOnlyInput(shipment?.shippedAt) || toDateOnlyInput(new Date().toISOString());
+  elements.domesticShipmentFields.logisticsProvider.value = shipment?.logisticsProvider || "";
+  elements.domesticShipmentFields.logisticsMethod.value = shipment?.logisticsMethod || "air";
+  elements.domesticShipmentFields.shipper.value = shipment?.shipper || "";
+  elements.domesticShipmentFields.storeName.value = shipment?.storeName || "";
+  elements.domesticShipmentFields.trackingNo.value = shipment?.trackingNo || "";
+  elements.domesticShipmentFields.customNo.value = shipment?.customNo || shipment?.title || "";
+  elements.domesticShipmentFields.platformShipmentNo.value = shipment?.platformShipmentNo || "";
+  shipmentLines = shipment?.lines?.length ? shipment.lines.map((line) => ({ lineType: line.lineType || "box", ...line })) : [createEmptyShipmentLine(0, "box")];
+  renderShipmentLines();
+  setDomesticShipmentMessage("");
+  elements.domesticShipmentModal.classList.remove("hidden");
+  document.body.classList.add("modal-open");
+  window.setTimeout(() => elements.domesticShipmentFields.shippedAt.focus(), 0);
+}
+
+function closeDomesticShipmentModal() {
+  editingDomesticShipmentId = null;
+  shipmentLines = [];
+  elements.domesticShipmentModal.classList.add("hidden");
+  document.body.classList.remove("modal-open");
+}
+
+function getDomesticShipmentPayload() {
+  return {
+    shippedAt: elements.domesticShipmentFields.shippedAt.value,
+    logisticsProvider: elements.domesticShipmentFields.logisticsProvider.value.trim(),
+    logisticsMethod: elements.domesticShipmentFields.logisticsMethod.value,
+    shipper: elements.domesticShipmentFields.shipper.value.trim(),
+    storeName: elements.domesticShipmentFields.storeName.value.trim(),
+    trackingNo: elements.domesticShipmentFields.trackingNo.value.trim(),
+    customNo: elements.domesticShipmentFields.customNo.value.trim(),
+    platformShipmentNo: elements.domesticShipmentFields.platformShipmentNo.value.trim(),
+    title: elements.domesticShipmentFields.customNo.value.trim() || elements.domesticShipmentFields.trackingNo.value.trim(),
+    status: "draft",
+    lines: shipmentLines.map(calculateShipmentLine)
+  };
+}
+
+async function saveDomesticShipment() {
+  const payload = getDomesticShipmentPayload();
+  if (!payload.logisticsProvider) throw new Error("请填写物流商");
+  if (!payload.logisticsMethod) throw new Error("请选择物流方式");
+  if (!payload.shipper) throw new Error("请填写发货人");
+  if (!payload.storeName) throw new Error("请填写店铺名");
+  if (editingDomesticShipmentId) {
+    const data = await requestApi(`/api/domestic-shipments/${editingDomesticShipmentId}`, { method: "PUT", body: JSON.stringify(payload) });
+    setDomesticShipmentMessage("发货单已更新。");
+    closeDomesticShipmentModal();
+    await loadDomesticShipments();
+    return data.shipment;
+  }
+  const data = await requestApi("/api/domestic-shipments", { method: "POST", body: JSON.stringify(payload) });
+  setDomesticShipmentMessage("发货单已新增。");
+  closeDomesticShipmentModal();
+  await loadDomesticShipments();
+  return data.shipment;
+}
+
+function exportDomesticShipment(shipmentId = editingDomesticShipmentId) {
+  if (!shipmentId) {
+    setDomesticShipmentMessage("请先保存发货单后再导出箱单。", true);
+    return;
+  }
+  window.location.href = `/api/domestic-shipments/${shipmentId}/packing-list`;
 }
 
 function getShopFormInput() {
@@ -627,6 +928,15 @@ function toDateTimeLocal(value) {
 
 function fromDateTimeLocal(value) {
   return value ? new Date(value).toISOString() : "";
+}
+
+function toDateOnlyInput(value) {
+  if (!value) return "";
+  if (/^\d{4}-\d{2}-\d{2}$/.test(String(value))) return value;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const offset = date.getTimezoneOffset() * 60000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 10);
 }
 
 async function startMercadoLibreAuthorization() {
@@ -826,21 +1136,32 @@ elements.logoutButton.addEventListener("click", async () => {
 
 elements.productsNavButton.addEventListener("click", () => switchPage("products"));
 elements.shopsNavButton.addEventListener("click", () => switchPage("shops"));
+elements.domesticShipmentsNavButton.addEventListener("click", () => switchPage("domesticShipments"));
 elements.newProductButton.addEventListener("click", () => openProductModal());
 elements.newShopButton.addEventListener("click", () => openShopModal());
+elements.newDomesticShipmentButton.addEventListener("click", async () => {
+  if (!products.length) await loadProducts().catch(() => {});
+  openDomesticShipmentModal();
+});
 elements.closeModalButton.addEventListener("click", closeProductModal);
 elements.closeShopModalButton.addEventListener("click", closeShopModal);
+elements.closeDomesticShipmentModalButton.addEventListener("click", closeDomesticShipmentModal);
 elements.cancelEditButton.addEventListener("click", closeProductModal);
 elements.cancelShopButton.addEventListener("click", closeShopModal);
+elements.cancelDomesticShipmentButton.addEventListener("click", closeDomesticShipmentModal);
 elements.modal.addEventListener("click", (event) => {
   if (event.target.matches("[data-close-modal]")) closeProductModal();
 });
 elements.shopModal.addEventListener("click", (event) => {
   if (event.target.matches("[data-close-shop-modal]")) closeShopModal();
 });
+elements.domesticShipmentModal.addEventListener("click", (event) => {
+  if (event.target.matches("[data-close-domestic-shipment-modal]")) closeDomesticShipmentModal();
+});
 window.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !elements.modal.classList.contains("hidden")) closeProductModal();
   if (event.key === "Escape" && !elements.shopModal.classList.contains("hidden")) closeShopModal();
+  if (event.key === "Escape" && !elements.domesticShipmentModal.classList.contains("hidden")) closeDomesticShipmentModal();
 });
 
 elements.form.addEventListener("submit", async (event) => {
@@ -868,6 +1189,61 @@ elements.shopForm.addEventListener("submit", async (event) => {
   } catch (error) {
     setShopMessage(error.message, true);
   }
+});
+
+elements.domesticShipmentForm.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  try {
+    await saveDomesticShipment();
+  } catch (error) {
+    setDomesticShipmentMessage(error.message, true);
+  }
+});
+
+elements.addDomesticShipmentBoxButton.addEventListener("click", () => {
+  const nextBoxNo = String(new Set(shipmentLines.map((line) => String(line.boxNo || "").trim()).filter(Boolean)).size + 1);
+  shipmentLines.push(createEmptyShipmentLine(shipmentLines.length, "box", { boxNo: nextBoxNo }));
+  renderShipmentLines();
+});
+
+elements.addDomesticShipmentProductButton.addEventListener("click", () => {
+  const baseLine = [...shipmentLines].reverse().find((line) => line.lineType !== "product") || shipmentLines[shipmentLines.length - 1];
+  if (!baseLine) {
+    shipmentLines.push(createEmptyShipmentLine(0, "box"));
+  } else {
+    shipmentLines.push(createEmptyShipmentLine(shipmentLines.length, "product", calculateShipmentLine(baseLine)));
+  }
+  renderShipmentLines();
+});
+
+elements.exportDomesticShipmentButton.addEventListener("click", () => exportDomesticShipment());
+
+elements.domesticShipmentLineRows.addEventListener("change", (event) => {
+  const input = event.target.closest("[data-line-field]");
+  if (!input) return;
+  const row = input.closest("tr[data-line-index]");
+  const index = Number(row?.dataset.lineIndex);
+  if (!Number.isInteger(index) || !shipmentLines[index]) return;
+  const field = input.dataset.lineField;
+  shipmentLines[index] = { ...shipmentLines[index], [field]: input.value };
+  if (field === "productNameZh") {
+    shipmentLines[index] = applyProductToShipmentLine(shipmentLines[index], findLocalProductMatch(input.value));
+  }
+  shipmentLines[index] = calculateShipmentLine(shipmentLines[index]);
+  if (shipmentLines[index].lineType !== "product" && ["boxNo", "length", "width", "height", "actualWeight"].includes(field)) {
+    syncBoxDataToProductLines(shipmentLines[index]);
+  }
+  if (field !== "boxNo") renderShipmentLines();
+  else updateShipmentSummary();
+});
+
+elements.domesticShipmentLineRows.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-remove-line]");
+  if (!button) return;
+  const index = Number(button.dataset.removeLine);
+  shipmentLines.splice(index, 1);
+  if (!shipmentLines.length) shipmentLines.push(createEmptyShipmentLine(0));
+  renderShipmentLines();
 });
 
 elements.shopFields.platformType.addEventListener("change", updateShopPlatformDefaults);
@@ -967,6 +1343,39 @@ elements.shopRows.addEventListener("click", async (event) => {
   }
 });
 
+elements.domesticShipmentRows.addEventListener("click", async (event) => {
+  const button = event.target.closest("button[data-shipment-action]");
+  if (!button) return;
+  const shipmentId = button.dataset.id;
+
+  if (button.dataset.shipmentAction === "export") {
+    exportDomesticShipment(shipmentId);
+    return;
+  }
+
+  if (button.dataset.shipmentAction === "edit") {
+    try {
+      if (!products.length) await loadProducts().catch(() => {});
+      const data = await requestApi(`/api/domestic-shipments/${shipmentId}`);
+      openDomesticShipmentModal(data.shipment);
+    } catch (error) {
+      setDomesticShipmentMessage(error.message, true);
+    }
+    return;
+  }
+
+  if (button.dataset.shipmentAction === "delete") {
+    if (!window.confirm("确认删除这个发货单吗？")) return;
+    try {
+      await requestApi(`/api/domestic-shipments/${shipmentId}`, { method: "DELETE" });
+      setDomesticShipmentMessage("发货单已删除。");
+      await loadDomesticShipments();
+    } catch (error) {
+      setDomesticShipmentMessage(error.message, true);
+    }
+  }
+});
+
 elements.searchInput.addEventListener("input", () => {
   window.clearTimeout(elements.searchInput.searchTimer);
   elements.searchInput.searchTimer = window.setTimeout(loadProducts, 250);
@@ -984,6 +1393,7 @@ async function boot() {
     showApp(data.user);
     await loadProducts();
     await loadShops();
+    await loadDomesticShipments();
   } catch {
     showLogin();
   }

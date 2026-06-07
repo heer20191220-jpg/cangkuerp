@@ -77,6 +77,7 @@ function seedDb() {
     ],
     sessions: [],
     products: [],
+    domesticShipments: [],
     shops: [],
     storeBindings: [],
     oauthStates: [],
@@ -97,6 +98,7 @@ async function loadDb() {
   db.sessions ||= [];
   db.logs ||= [];
   db.products ||= [];
+  db.domesticShipments ||= [];
   db.shops ||= [];
   db.storeBindings ||= [];
   db.oauthStates ||= [];
@@ -158,6 +160,63 @@ function saveDb() {
 function sendJson(res, status, payload) {
   res.writeHead(status, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(payload));
+}
+
+function csvEscape(value) {
+  return `"${String(value ?? "").replaceAll('"', '""')}"`;
+}
+
+function sendCsv(res, filename, rows) {
+  const csv = rows.map((row) => row.map(csvEscape).join(",")).join("\n");
+  res.writeHead(200, {
+    "Content-Type": "text/csv; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+    "Cache-Control": "no-store"
+  });
+  res.end(`\uFEFF${csv}`);
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function sendExcelHtml(res, filename, headers, rows) {
+  const html = `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    table { border-collapse: collapse; font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 12px; }
+    th, td { border: 1px solid #999; padding: 6px; vertical-align: middle; mso-number-format: "\\@"; }
+    th { background: #eaf4f0; font-weight: 700; }
+    img { width: 72px; height: 72px; object-fit: contain; display: block; }
+  </style>
+</head>
+<body>
+  <table>
+    <thead><tr>${headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("")}</tr></thead>
+    <tbody>
+      ${rows.map((row) => `<tr>${row.map((cell) => {
+        if (cell && typeof cell === "object" && cell.type === "image") {
+          return `<td>${cell.src ? `<img src="${escapeHtml(cell.src)}" alt="">` : ""}</td>`;
+        }
+        return `<td>${escapeHtml(cell)}</td>`;
+      }).join("")}</tr>`).join("")}
+    </tbody>
+  </table>
+</body>
+</html>`;
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.ms-excel; charset=utf-8",
+    "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+    "Cache-Control": "no-store"
+  });
+  res.end(`\uFEFF${html}`);
 }
 
 function parseCookies(req) {
@@ -693,6 +752,174 @@ function validateProduct(product) {
   return null;
 }
 
+function normalizeMatchText(value) {
+  return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function findProductMatchByChineseName(value) {
+  const query = normalizeMatchText(value);
+  if (!query) return null;
+  const scored = db.products.map((product) => {
+    const fields = [product.zhName, product.customName, product.declarationName, product.storeName]
+      .map(normalizeMatchText)
+      .filter(Boolean);
+    let score = 0;
+    for (const field of fields) {
+      if (field === query) score = Math.max(score, 100);
+      else if (field.includes(query)) score = Math.max(score, 80);
+      else if (query.includes(field)) score = Math.max(score, Math.min(70, field.length * 3));
+    }
+    return { product, score };
+  }).filter((item) => item.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.product || null;
+}
+
+function publicProductMatch(product) {
+  if (!product) return null;
+  return {
+    id: product.id,
+    storeName: product.storeName || "",
+    customName: product.customName || "",
+    purchaseUrl: product.purchaseUrl || "",
+    mainImage: product.mainImage || "",
+    variants: Array.isArray(product.variants) ? product.variants : [],
+    declarationName: product.declarationName || "",
+    zhName: product.zhName || "",
+    enName: product.enName || "",
+    materialZh: product.materialZh || "",
+    materialEn: product.materialEn || "",
+    useZh: product.useZh || "",
+    useEn: product.useEn || "",
+    category: product.category || "",
+    length: product.length || 0,
+    width: product.width || 0,
+    height: product.height || 0,
+    weight: product.weight || 0,
+    price: product.price || 0,
+    volumeCbm: product.volumeCbm || 0,
+    chargeWeight: product.chargeWeight || 0,
+    hsCode: product.hsCode || "",
+    hsLabel: product.hsLabel || ""
+  };
+}
+
+function buildShipmentLine(input = {}, index = 0) {
+  const lineType = input.lineType === "product" ? "product" : "box";
+  const length = toNumber(input.length);
+  const width = toNumber(input.width);
+  const height = toNumber(input.height);
+  const actualWeight = toNumber(input.actualWeight ?? input.weight);
+  const volumeCbm = length * width * height / 1000000;
+  const volumeWeight = length * width * height / VOLUME_DIVISOR;
+  const chargeWeight = Math.max(actualWeight, volumeWeight);
+  const productNameZh = compactChinese(input.productNameZh || input.zhName || input.productName, 60);
+  const matchedProduct = input.productId
+    ? db.products.find((product) => product.id === input.productId) || findProductMatchByChineseName(productNameZh)
+    : findProductMatchByChineseName(productNameZh);
+  const matched = publicProductMatch(matchedProduct);
+
+  return {
+    id: input.id || createId("shipline"),
+    lineType,
+    boxNo: String(input.boxNo || input.cartonNo || index + 1).trim(),
+    productNameZh,
+    quantity: toNumber(input.quantity),
+    productId: matched?.id || "",
+    matchedProduct: matched,
+    declarationName: matched?.declarationName || productNameZh,
+    zhName: matched?.zhName || productNameZh,
+    enName: matched?.enName || "",
+    materialZh: matched?.materialZh || "",
+    materialEn: matched?.materialEn || "",
+    useZh: matched?.useZh || "",
+    useEn: matched?.useEn || "",
+    category: matched?.category || "",
+    hsCode: matched?.hsCode || "",
+    hsLabel: matched?.hsLabel || "",
+    length,
+    width,
+    height,
+    actualWeight: round(actualWeight, 3),
+    volumeCbm: round(volumeCbm, 6),
+    volumeWeight: round(volumeWeight, 2),
+    chargeWeight: round(chargeWeight, 2),
+    remark: String(input.remark || "").trim()
+  };
+}
+
+function summarizeShipmentLines(lines) {
+  const boxes = new Map();
+  for (const line of lines) {
+    const key = String(line.boxNo || "").trim() || line.id;
+    if (!boxes.has(key)) boxes.set(key, line);
+  }
+  const boxLines = [...boxes.values()];
+  return {
+    boxCount: boxLines.length,
+    productCount: lines.filter((line) => line.productNameZh).length,
+    totalCbm: round(boxLines.reduce((sum, line) => sum + toNumber(line.volumeCbm), 0), 6),
+    totalActualWeight: round(boxLines.reduce((sum, line) => sum + toNumber(line.actualWeight), 0), 3),
+    totalVolumeWeight: round(boxLines.reduce((sum, line) => sum + toNumber(line.volumeWeight), 0), 2),
+    totalChargeWeight: round(boxLines.reduce((sum, line) => sum + toNumber(line.chargeWeight), 0), 2)
+  };
+}
+
+function buildDomesticShipment(input, user, existingShipment = null) {
+  const lines = (Array.isArray(input.lines) ? input.lines : [])
+    .map((line, index) => buildShipmentLine(line, index))
+    .filter((line) => line.lineType === "product"
+      ? Boolean(line.productNameZh)
+      : (line.productNameZh || line.length || line.width || line.height || line.actualWeight));
+  const summary = summarizeShipmentLines(lines);
+  const now = nowIso();
+  return {
+    id: existingShipment?.id || createId("shipment"),
+    tenantId: existingShipment?.tenantId || getTenantId(user),
+    shipmentNo: String(input.shipmentNo || existingShipment?.shipmentNo || `DS${Date.now()}`).trim(),
+    shippedAt: String(input.shippedAt || input.shipped_at || "").trim(),
+    logisticsProvider: String(input.logisticsProvider || input.logistics_provider || "").trim(),
+    logisticsMethod: ["air", "sea"].includes(input.logisticsMethod || input.logistics_method) ? (input.logisticsMethod || input.logistics_method) : "air",
+    shipper: String(input.shipper || "").trim(),
+    storeName: String(input.storeName || input.store_name || "").trim(),
+    trackingNo: String(input.trackingNo || input.tracking_no || "").trim(),
+    customNo: String(input.customNo || input.custom_no || "").trim(),
+    platformShipmentNo: String(input.platformShipmentNo || input.platform_shipment_no || "").trim(),
+    title: String(input.title || input.customNo || input.trackingNo || existingShipment?.title || "").trim(),
+    status: String(input.status || existingShipment?.status || "draft").trim(),
+    receiver: String(input.receiver || "").trim(),
+    address: String(input.address || "").trim(),
+    remark: String(input.remark || "").trim(),
+    lines,
+    ...summary,
+    createdAt: existingShipment?.createdAt || now,
+    createdBy: existingShipment?.createdBy || user.id,
+    updatedAt: now,
+    updatedBy: user.id,
+    deletedAt: existingShipment?.deletedAt || ""
+  };
+}
+
+function validateDomesticShipment(shipment) {
+  if (!shipment.logisticsProvider) return "请填写物流商";
+  if (!shipment.logisticsMethod) return "请选择物流方式";
+  if (!shipment.shipper) return "请填写发货人";
+  if (!shipment.storeName) return "请填写店铺名";
+  if (!shipment.lines.length) return "请至少录入一行箱子数据";
+  const invalidBox = shipment.lines.find((line) => line.lineType !== "product" && (line.length <= 0 || line.width <= 0 || line.height <= 0 || line.actualWeight <= 0));
+  if (invalidBox) return `箱号 ${invalidBox.boxNo || "-"} 缺少长宽高或实重`;
+  const productLines = shipment.lines.filter((line) => line.productNameZh);
+  if (!productLines.length) return "请至少录入一个产品中文名";
+  const invalidProduct = productLines.find((line) => line.length <= 0 || line.width <= 0 || line.height <= 0 || line.actualWeight <= 0);
+  if (invalidProduct) return `箱号 ${invalidProduct.boxNo || "-"} 的产品缺少箱子长宽高或实重`;
+  return null;
+}
+
+function findTenantShipment(user, id, includeDeleted = false) {
+  const tenantId = getTenantId(user);
+  return db.domesticShipments.find((shipment) => shipment.id === id && shipment.tenantId === tenantId && (includeDeleted || !shipment.deletedAt));
+}
+
 function addLog(user, action, targetId, detail) {
   db.logs.unshift({ id: createId("log"), userId: user.id, username: user.username, action, targetId, detail, createdAt: nowIso() });
   db.logs = db.logs.slice(0, 1000);
@@ -1179,6 +1406,152 @@ async function handleApi(req, res, pathname) {
       addLog(session.user, "batch_create_product", "batch", `批量导入 ${productsToCreate.length} 个商品`);
       await saveDb();
       return sendJson(res, 201, { products: productsToCreate, count: productsToCreate.length });
+    }
+
+    if (pathname === "/api/products/match" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const url = new URL(req.url, `http://${req.headers.host}`);
+      const product = findProductMatchByChineseName(url.searchParams.get("name") || "");
+      return sendJson(res, 200, { product: publicProductMatch(product) });
+    }
+
+    if (pathname === "/api/domestic-shipments" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const tenantId = getTenantId(session.user);
+      const shipments = db.domesticShipments
+        .filter((shipment) => shipment.tenantId === tenantId && !shipment.deletedAt)
+        .map((shipment) => ({
+          id: shipment.id,
+          shipmentNo: shipment.shipmentNo,
+          shippedAt: shipment.shippedAt || "",
+          logisticsProvider: shipment.logisticsProvider || "",
+          logisticsMethod: shipment.logisticsMethod || "",
+          storeName: shipment.storeName || "",
+          trackingNo: shipment.trackingNo || "",
+          customNo: shipment.customNo || "",
+          platformShipmentNo: shipment.platformShipmentNo || "",
+          title: shipment.title,
+          status: shipment.status,
+          boxCount: shipment.boxCount,
+          productCount: shipment.productCount || 0,
+          totalCbm: shipment.totalCbm,
+          totalActualWeight: shipment.totalActualWeight,
+          totalChargeWeight: shipment.totalChargeWeight,
+          updatedAt: shipment.updatedAt,
+          createdAt: shipment.createdAt
+        }));
+      return sendJson(res, 200, { shipments });
+    }
+
+    if (pathname === "/api/domestic-shipments" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shipment = buildDomesticShipment(await readBody(req), session.user);
+      const error = validateDomesticShipment(shipment);
+      if (error) return sendJson(res, 400, { error });
+      db.domesticShipments.unshift(shipment);
+      addLog(session.user, "create_domestic_shipment", shipment.id, `新增国内发货单 ${shipment.shipmentNo}`);
+      await saveDb();
+      return sendJson(res, 201, { shipment });
+    }
+
+    const domesticShipmentMatch = pathname.match(/^\/api\/domestic-shipments\/([^/]+)(?:\/(packing-list))?$/);
+    if (domesticShipmentMatch && req.method === "GET" && domesticShipmentMatch[2] === "packing-list") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const shipment = findTenantShipment(session.user, domesticShipmentMatch[1]);
+      if (!shipment) return sendJson(res, 404, { error: "发货单不存在" });
+      const headers = [
+        "箱号", "箱长cm", "箱宽cm", "箱高cm", "箱实重kg", "箱CBM", "箱体积重kg", "箱计费重kg",
+        "箱内产品中文名", "数量",
+        "产品图片", "产品库ID", "店铺名", "自定义商品名", "1688采购链接", "主图链接", "变体信息",
+        "申报名", "中文品名", "英文品名", "中文材质", "英文材质", "中文用途", "英文用途",
+        "产品类别", "产品长cm", "产品宽cm", "产品高cm", "产品重量kg", "采购价RMB",
+        "产品体积m3", "产品计费重kg", "海关编码", "海关编码标签"
+      ];
+      const exportLines = shipment.lines.filter((line) => line.productNameZh);
+      const rows = exportLines.map((line) => {
+        const storedProduct = line.productId ? db.products.find((product) => product.id === line.productId) : null;
+        const product = publicProductMatch(storedProduct) || line.matchedProduct || {};
+        return [
+          line.boxNo,
+          line.length,
+          line.width,
+          line.height,
+          line.actualWeight,
+          line.volumeCbm,
+          line.volumeWeight,
+          line.chargeWeight,
+          line.productNameZh,
+          line.quantity || "",
+          { type: "image", src: product.mainImage || "" },
+          product.id || line.productId || "",
+          product.storeName || "",
+          product.customName || "",
+          product.purchaseUrl || "",
+          product.mainImage || "",
+          JSON.stringify(product.variants || []),
+          product.declarationName || line.declarationName || "",
+          product.zhName || line.zhName || "",
+          product.enName || line.enName || "",
+          product.materialZh || line.materialZh || "",
+          product.materialEn || line.materialEn || "",
+          product.useZh || line.useZh || "",
+          product.useEn || line.useEn || "",
+          product.category || line.category || "",
+          product.length || "",
+          product.width || "",
+          product.height || "",
+          product.weight || "",
+          product.price || "",
+          product.volumeCbm || "",
+          product.chargeWeight || "",
+          product.hsCode || line.hsCode || "",
+          product.hsLabel || line.hsLabel || ""
+        ];
+      });
+      rows.push([
+        "合计", "", "", "", shipment.totalActualWeight, shipment.totalCbm, shipment.totalVolumeWeight, shipment.totalChargeWeight,
+        "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+      ]);
+      return sendExcelHtml(res, `国内发货箱单_${shipment.shipmentNo}.xls`, headers, rows);
+    }
+
+    if (domesticShipmentMatch && req.method === "GET" && !domesticShipmentMatch[2]) {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const shipment = findTenantShipment(session.user, domesticShipmentMatch[1]);
+      if (!shipment) return sendJson(res, 404, { error: "发货单不存在" });
+      return sendJson(res, 200, { shipment });
+    }
+
+    if (domesticShipmentMatch && req.method === "PUT" && !domesticShipmentMatch[2]) {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shipment = findTenantShipment(session.user, domesticShipmentMatch[1]);
+      if (!shipment) return sendJson(res, 404, { error: "发货单不存在" });
+      const updated = buildDomesticShipment(await readBody(req), session.user, shipment);
+      const error = validateDomesticShipment(updated);
+      if (error) return sendJson(res, 400, { error });
+      Object.assign(shipment, updated);
+      addLog(session.user, "update_domestic_shipment", shipment.id, `修改国内发货单 ${shipment.shipmentNo}`);
+      await saveDb();
+      return sendJson(res, 200, { shipment });
+    }
+
+    if (domesticShipmentMatch && req.method === "DELETE" && !domesticShipmentMatch[2]) {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const shipment = findTenantShipment(session.user, domesticShipmentMatch[1]);
+      if (!shipment) return sendJson(res, 404, { error: "发货单不存在" });
+      shipment.deletedAt = nowIso();
+      shipment.updatedAt = shipment.deletedAt;
+      shipment.updatedBy = session.user.id;
+      addLog(session.user, "delete_domestic_shipment", shipment.id, `删除国内发货单 ${shipment.shipmentNo}`);
+      await saveDb();
+      return sendJson(res, 200, { ok: true });
     }
 
     if (pathname === "/api/shops" && req.method === "GET") {
