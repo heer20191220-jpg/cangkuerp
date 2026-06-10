@@ -10,6 +10,7 @@ const ROOT = __dirname;
 const DATA_DIR = path.join(ROOT, "data");
 const DB_PATH = path.join(DATA_DIR, "db.json");
 const SESSION_TTL_MS = 1000 * 60 * 60 * 8;
+const TOKEN_REFRESH_WINDOW_MS = 5 * 60 * 1000;
 const VOLUME_DIVISOR = 6000;
 const DEFAULT_TENANT_ID = "tenant_default";
 const ENCRYPTION_KEY = crypto.createHash("sha256")
@@ -33,6 +34,13 @@ function sha256(value) {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function formatDateOnly(value) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value).slice(0, 10);
+  return date.toISOString().slice(0, 10);
 }
 
 function createId(prefix) {
@@ -78,9 +86,15 @@ function seedDb() {
     sessions: [],
     products: [],
     domesticShipments: [],
+    storeInventory: [],
+    storeOrders: [],
+    storeOrderItems: [],
+    fbpoOrders: [],
+    fbpoOrderItems: [],
     shops: [],
     storeBindings: [],
     oauthStates: [],
+    syncLogs: [],
     hsCodes: defaultHsCodes(),
     logs: []
   };
@@ -99,9 +113,15 @@ async function loadDb() {
   db.logs ||= [];
   db.products ||= [];
   db.domesticShipments ||= [];
+  db.storeInventory ||= [];
+  db.storeOrders ||= [];
+  db.storeOrderItems ||= [];
+  db.fbpoOrders ||= [];
+  db.fbpoOrderItems ||= [];
   db.shops ||= [];
   db.storeBindings ||= [];
   db.oauthStates ||= [];
+  db.syncLogs ||= [];
   db.shops = normalizeShops(db.shops);
   db.hsCodes = hasBrokenChinese(db.hsCodes) ? defaultHsCodes() : (db.hsCodes || defaultHsCodes());
   db.users = normalizeUsers(db.users);
@@ -136,6 +156,8 @@ function normalizeShops(shops = []) {
       platform,
       shop_name: shop.shop_name || shop.shopName || "",
       seller_id: shop.seller_id || shop.sellerId || shop.shopAccount || "",
+      user_id: shop.user_id || shop.userId || "",
+      warehouse_code: shop.warehouse_code || shop.warehouseCode || "",
       auth_type: authType,
       access_token_encrypted: shop.access_token_encrypted || "",
       refresh_token_encrypted: shop.refresh_token_encrypted || "",
@@ -191,10 +213,12 @@ function sendExcelHtml(res, filename, headers, rows) {
 <head>
   <meta charset="utf-8">
   <style>
-    table { border-collapse: collapse; font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 12px; }
-    th, td { border: 1px solid #999; padding: 6px; vertical-align: middle; mso-number-format: "\\@"; }
-    th { background: #eaf4f0; font-weight: 700; }
-    img { width: 72px; height: 72px; object-fit: contain; display: block; }
+    table { border-collapse: collapse; table-layout: fixed; font-family: "Microsoft YaHei", Arial, sans-serif; font-size: 12px; }
+    tr { height: 86px; }
+    th, td { border: 1px solid #999; padding: 6px; vertical-align: middle; mso-number-format: "\\@"; white-space: normal; }
+    th { height: 28px; background: #eaf4f0; font-weight: 700; text-align: center; }
+    td.image-cell { width: 88px; height: 86px; padding: 2px; text-align: center; vertical-align: middle; background: #fff; }
+    td.image-cell img { width: 78px; height: 78px; object-fit: contain; display: block; margin: 0 auto; }
   </style>
 </head>
 <body>
@@ -203,7 +227,7 @@ function sendExcelHtml(res, filename, headers, rows) {
     <tbody>
       ${rows.map((row) => `<tr>${row.map((cell) => {
         if (cell && typeof cell === "object" && cell.type === "image") {
-          return `<td>${cell.src ? `<img src="${escapeHtml(cell.src)}" alt="">` : ""}</td>`;
+          return `<td class="image-cell">${cell.src ? `<img src="${escapeHtml(cell.src)}" alt="">` : ""}</td>`;
         }
         return `<td>${escapeHtml(cell)}</td>`;
       }).join("")}</tr>`).join("")}
@@ -217,6 +241,211 @@ function sendExcelHtml(res, filename, headers, rows) {
     "Cache-Control": "no-store"
   });
   res.end(`\uFEFF${html}`);
+}
+
+function xmlEscape(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;");
+}
+
+function cellRef(colIndex, rowIndex) {
+  let col = "";
+  let index = colIndex + 1;
+  while (index > 0) {
+    const mod = (index - 1) % 26;
+    col = String.fromCharCode(65 + mod) + col;
+    index = Math.floor((index - mod) / 26);
+  }
+  return `${col}${rowIndex + 1}`;
+}
+
+async function sendXlsx(res, filename, headers, rows, imageColumnIndex = -1) {
+  const allRows = [headers, ...rows];
+  const images = [];
+  if (imageColumnIndex >= 0) {
+    let imageIndex = 1;
+    for (let rowIndex = 1; rowIndex < allRows.length; rowIndex += 1) {
+      const cell = allRows[rowIndex][imageColumnIndex];
+      if (!cell || typeof cell !== "object" || cell.type !== "image" || !cell.src) continue;
+      const image = await loadXlsxImage(cell.src, imageIndex);
+      if (!image) continue;
+      images.push({ ...image, rowIndex, colIndex: imageColumnIndex, relId: `rId${imageIndex}` });
+      imageIndex += 1;
+    }
+  }
+  const sheetXml = buildWorksheetXml(allRows, imageColumnIndex, images.length > 0);
+  const contentTypesXml = buildContentTypesXml(images);
+  const workbookXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="箱单" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const workbookRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/></Relationships>`;
+  const rootRelsXml = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`;
+  const sheetRelsXml = images.length ? `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/drawing" Target="../drawings/drawing1.xml"/></Relationships>` : "";
+  const drawingXml = images.length ? buildDrawingXml(images) : "";
+  const drawingRelsXml = images.length ? buildDrawingRelsXml(images) : "";
+
+  const files = [
+    ["[Content_Types].xml", Buffer.from(contentTypesXml)],
+    ["_rels/.rels", Buffer.from(rootRelsXml)],
+    ["xl/workbook.xml", Buffer.from(workbookXml)],
+    ["xl/_rels/workbook.xml.rels", Buffer.from(workbookRelsXml)],
+    ["xl/worksheets/sheet1.xml", Buffer.from(sheetXml)]
+  ];
+  if (images.length) {
+    files.push(["xl/worksheets/_rels/sheet1.xml.rels", Buffer.from(sheetRelsXml)]);
+    files.push(["xl/drawings/drawing1.xml", Buffer.from(drawingXml)]);
+    files.push(["xl/drawings/_rels/drawing1.xml.rels", Buffer.from(drawingRelsXml)]);
+    for (const image of images) files.push([`xl/media/${image.fileName}`, image.buffer]);
+  }
+
+  res.writeHead(200, {
+    "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "Content-Disposition": `attachment; filename="${encodeURIComponent(filename)}"`,
+    "Cache-Control": "no-store"
+  });
+  res.end(createZip(files));
+}
+
+function buildWorksheetXml(rows, imageColumnIndex, hasDrawing = false) {
+  const maxCols = rows.reduce((max, row) => Math.max(max, row.length), 0);
+  const cols = Array.from({ length: maxCols }, (_, index) => {
+    const width = index === imageColumnIndex ? 14 : index <= 8 ? 12 : 18;
+    return `<col min="${index + 1}" max="${index + 1}" width="${width}" customWidth="1"/>`;
+  }).join("");
+  const sheetData = rows.map((row, rowIndex) => {
+    const height = rowIndex === 0 ? 24 : 70;
+    const cells = row.map((cell, colIndex) => buildXlsxCell(cell, colIndex, rowIndex, imageColumnIndex)).join("");
+    return `<row r="${rowIndex + 1}" ht="${height}" customHeight="1">${cells}</row>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><cols>${cols}</cols><sheetData>${sheetData}</sheetData>${hasDrawing ? '<drawing r:id="rId1"/>' : ""}</worksheet>`;
+}
+
+function buildXlsxCell(cell, colIndex, rowIndex, imageColumnIndex) {
+  const ref = cellRef(colIndex, rowIndex);
+  if (cell && typeof cell === "object" && cell.type === "image") {
+    return `<c r="${ref}" t="inlineStr"><is><t></t></is></c>`;
+  }
+  return `<c r="${ref}" t="inlineStr"><is><t>${xmlEscape(cell)}</t></is></c>`;
+}
+function buildContentTypesXml(images = []) {
+  const hasPng = images.some((image) => image.ext === "png");
+  const hasJpeg = images.some((image) => image.ext === "jpeg");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${hasPng ? '<Default Extension="png" ContentType="image/png"/>' : ""}${hasJpeg ? '<Default Extension="jpeg" ContentType="image/jpeg"/><Default Extension="jpg" ContentType="image/jpeg"/>' : ""}<Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>${images.length ? '<Override PartName="/xl/drawings/drawing1.xml" ContentType="application/vnd.openxmlformats-officedocument.drawing+xml"/>' : ""}</Types>`;
+}
+
+function buildDrawingXml(images) {
+  const anchors = images.map((image, index) => {
+    const id = index + 1;
+    const fromCol = image.colIndex;
+    const fromRow = image.rowIndex;
+    return `<xdr:twoCellAnchor editAs="oneCell"><xdr:from><xdr:col>${fromCol}</xdr:col><xdr:colOff>45720</xdr:colOff><xdr:row>${fromRow}</xdr:row><xdr:rowOff>45720</xdr:rowOff></xdr:from><xdr:to><xdr:col>${fromCol + 1}</xdr:col><xdr:colOff>-45720</xdr:colOff><xdr:row>${fromRow + 1}</xdr:row><xdr:rowOff>-45720</xdr:rowOff></xdr:to><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${id}" name="ProductImage${id}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="${image.relId}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:twoCellAnchor>`;
+  }).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">${anchors}</xdr:wsDr>`;
+}
+
+function buildDrawingRelsXml(images) {
+  const rels = images.map((image) => `<Relationship Id="${image.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="../media/${image.fileName}"/>`).join("");
+  return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">${rels}</Relationships>`;
+}
+async function loadXlsxImage(src, index) {
+  let buffer = null;
+  let type = "";
+  const dataMatch = String(src).match(/^data:(image\/(?:png|jpeg|jpg));base64,(.+)$/i);
+  if (dataMatch) {
+    type = dataMatch[1].toLowerCase();
+    buffer = Buffer.from(dataMatch[2], "base64");
+  } else if (/^https?:\/\//i.test(src)) {
+    const response = await fetch(src, { headers: { "User-Agent": "Mozilla/5.0 WarehouseERP/1.0" } });
+    if (!response.ok) return null;
+    type = String(response.headers.get("content-type") || "").toLowerCase();
+    buffer = Buffer.from(await response.arrayBuffer());
+  }
+  if (!buffer) return null;
+  const isPng = type.includes("png") || buffer.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  const isJpeg = type.includes("jpeg") || type.includes("jpg") || (buffer[0] === 0xff && buffer[1] === 0xd8);
+  if (!isPng && !isJpeg) return null;
+  const ext = isPng ? "png" : "jpeg";
+  return { buffer, ext, fileName: `image${index}.${ext}` };
+}
+
+const crcTable = Array.from({ length: 256 }, (_, index) => {
+  let value = index;
+  for (let bit = 0; bit < 8; bit += 1) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1;
+  return value >>> 0;
+});
+
+function crc32(buffer) {
+  let crc = 0xffffffff;
+  for (const byte of buffer) crc = crcTable[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function createZip(files) {
+  const locals = [];
+  const centrals = [];
+  let offset = 0;
+  for (const [name, data] of files) {
+    const nameBuffer = Buffer.from(name);
+    const fileCrc = crc32(data);
+    const local = Buffer.alloc(30 + nameBuffer.length);
+    local.writeUInt32LE(0x04034b50, 0);
+    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(0x0800, 6);
+    local.writeUInt16LE(0, 8);
+    local.writeUInt16LE(0, 10);
+    local.writeUInt16LE(0, 12);
+    local.writeUInt32LE(fileCrc, 14);
+    local.writeUInt32LE(data.length, 18);
+    local.writeUInt32LE(data.length, 22);
+    local.writeUInt16LE(nameBuffer.length, 26);
+    local.writeUInt16LE(0, 28);
+    nameBuffer.copy(local, 30);
+    locals.push(local, data);
+
+    const central = Buffer.alloc(46 + nameBuffer.length);
+    central.writeUInt32LE(0x02014b50, 0);
+    central.writeUInt16LE(20, 4);
+    central.writeUInt16LE(20, 6);
+    central.writeUInt16LE(0x0800, 8);
+    central.writeUInt16LE(0, 10);
+    central.writeUInt16LE(0, 12);
+    central.writeUInt16LE(0, 14);
+    central.writeUInt32LE(fileCrc, 16);
+    central.writeUInt32LE(data.length, 20);
+    central.writeUInt32LE(data.length, 24);
+    central.writeUInt16LE(nameBuffer.length, 28);
+    central.writeUInt16LE(0, 30);
+    central.writeUInt16LE(0, 32);
+    central.writeUInt16LE(0, 34);
+    central.writeUInt16LE(0, 36);
+    central.writeUInt32LE(0, 38);
+    central.writeUInt32LE(offset, 42);
+    nameBuffer.copy(central, 46);
+    centrals.push(central);
+
+    offset += local.length + data.length;
+  }
+
+  const centralSize = centrals.reduce((sum, item) => sum + item.length, 0);
+  const end = Buffer.alloc(22);
+  end.writeUInt32LE(0x06054b50, 0);
+  end.writeUInt16LE(0, 4);
+  end.writeUInt16LE(0, 6);
+  end.writeUInt16LE(files.length, 8);
+  end.writeUInt16LE(files.length, 10);
+  end.writeUInt32LE(centralSize, 12);
+  end.writeUInt32LE(offset, 16);
+  end.writeUInt16LE(0, 20);
+  return Buffer.concat([...locals, ...centrals, end]);
 }
 
 function parseCookies(req) {
@@ -266,7 +495,7 @@ function readBody(req) {
     let body = "";
     req.on("data", (chunk) => {
       body += chunk;
-      if (body.length > 5 * 1024 * 1024) {
+      if (body.length > 50 * 1024 * 1024) {
         reject(new Error("请求内容过大"));
         req.destroy();
       }
@@ -677,7 +906,10 @@ async function buildProduct(input, user, existingProduct = null) {
   const zhName = compactChinese(input.zhName);
   const materialZh = compactChinese(input.materialZh);
   const useZh = compactChinese(input.useZh);
-  const hsResult = await lookupHsCodeWithOnline(zhName);
+  const manualHsCode = String(input.hsCode || input.hs_code || "").trim();
+  const hsResult = manualHsCode
+    ? { code: manualHsCode, label: "手动输入" }
+    : await lookupHsCodeWithOnline(zhName);
   const storeName = String(input.storeName || "").trim();
   const customName = String(input.customName || "").trim();
   const purchaseUrl = String(input.purchaseUrl || "").trim();
@@ -804,6 +1036,144 @@ function publicProductMatch(product) {
   };
 }
 
+function productAssetKey(storeName, productName, zhName) {
+  return [storeName, productName || zhName].map((item) => normalizeMatchText(item)).join("|");
+}
+
+function findProductForAsset(storeName, productName, zhName) {
+  const storeQuery = normalizeMatchText(storeName);
+  const query = normalizeMatchText(productName || zhName);
+  if (!query) return null;
+  const scored = db.products.map((product) => {
+    const productStore = normalizeMatchText(product.storeName);
+    const names = [product.customName, product.zhName, product.declarationName].map(normalizeMatchText).filter(Boolean);
+    let score = 0;
+    if (storeQuery && productStore === storeQuery) score += 30;
+    else if (storeQuery && productStore.includes(storeQuery)) score += 15;
+    for (const name of names) {
+      if (name === query) score = Math.max(score, 100 + score);
+      else if (name.includes(query) || query.includes(name)) score = Math.max(score, 70 + score);
+    }
+    return { product, score };
+  }).filter((item) => item.score > 0);
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.product || null;
+}
+
+function createEmptyAssetBucket(storeName, product, fallbackName) {
+  const customName = product?.customName || fallbackName || "";
+  const zhName = product?.zhName || fallbackName || "";
+  const price = toNumber(product?.price);
+  return {
+    storeName: storeName || product?.storeName || "未分配店铺",
+    productId: product?.id || "",
+    productName: customName,
+    zhName,
+    image: product?.mainImage || "",
+    price,
+    matched: Boolean(product?.id),
+    quantities: { inStock: 0, pending: 0, shipped: 0, overseas: 0 },
+    values: { inStock: 0, pending: 0, shipped: 0, overseas: 0 }
+  };
+}
+
+function addAssetQuantity(bucket, stage, quantity) {
+  const qty = toNumber(quantity);
+  bucket.quantities[stage] += qty;
+  bucket.values[stage] += qty * toNumber(bucket.price);
+}
+
+function summarizeAssetBucket(bucket) {
+  const totalQuantity = Object.values(bucket.quantities).reduce((sum, value) => sum + toNumber(value), 0);
+  const totalValue = Object.values(bucket.values).reduce((sum, value) => sum + toNumber(value), 0);
+  return {
+    ...bucket,
+    quantities: Object.fromEntries(Object.entries(bucket.quantities).map(([key, value]) => [key, round(value, 2)])),
+    values: Object.fromEntries(Object.entries(bucket.values).map(([key, value]) => [key, round(value, 2)])),
+    totalQuantity: round(totalQuantity, 2),
+    totalValue: round(totalValue, 2)
+  };
+}
+
+function buildStoreAssets(user) {
+  const tenantId = getTenantId(user);
+  const buckets = new Map();
+  const totals = {
+    quantities: { inStock: 0, pending: 0, shipped: 0, overseas: 0 },
+    values: { inStock: 0, pending: 0, shipped: 0, overseas: 0 }
+  };
+  const getBucket = (storeName, product, fallbackName) => {
+    const key = product?.id ? `${storeName || product.storeName}|${product.id}` : productAssetKey(storeName, fallbackName, fallbackName);
+    if (!buckets.has(key)) buckets.set(key, createEmptyAssetBucket(storeName, product, fallbackName));
+    return buckets.get(key);
+  };
+
+  for (const item of db.storeInventory.filter((row) => (row.tenantId || DEFAULT_TENANT_ID) === tenantId)) {
+    const product = item.productId ? db.products.find((entry) => entry.id === item.productId) : findProductForAsset(item.storeName, item.productName, item.zhName);
+    const bucket = getBucket(item.storeName, product, item.productName || item.zhName);
+    addAssetQuantity(bucket, "inStock", item.quantity);
+  }
+
+  for (const shipment of db.domesticShipments.filter((item) => item.tenantId === tenantId && !item.deletedAt)) {
+    const status = shipment.status === "draft" ? "pending" : shipment.status;
+    const stage = status === "pending" ? "pending" : status === "shipped" ? "shipped" : status === "overseas_arrived" ? "overseas" : "";
+    if (!stage) continue;
+    for (const line of shipment.lines || []) {
+      if (!line.productNameZh) continue;
+      const product = line.productId ? db.products.find((entry) => entry.id === line.productId) : findProductForAsset(shipment.storeName, line.productNameZh, line.zhName);
+      const storeName = shipment.storeName || product?.storeName || "未分配店铺";
+      const bucket = getBucket(storeName, product, line.productNameZh);
+      addAssetQuantity(bucket, stage, line.quantity);
+    }
+  }
+
+  const items = [...buckets.values()].map(summarizeAssetBucket).sort((a, b) => a.storeName.localeCompare(b.storeName, "zh-CN") || a.productName.localeCompare(b.productName, "zh-CN"));
+  for (const item of items) {
+    for (const stage of Object.keys(totals.quantities)) {
+      totals.quantities[stage] += item.quantities[stage];
+      totals.values[stage] += item.values[stage];
+    }
+  }
+  const groupedItems = new Map();
+  for (const item of items) {
+    if (!groupedItems.has(item.storeName)) groupedItems.set(item.storeName, []);
+    groupedItems.get(item.storeName).push(item);
+  }
+  const storeGroups = [];
+  for (const [storeName, groupItems] of groupedItems) {
+    const summary = {
+      storeName,
+      quantities: { inStock: 0, pending: 0, shipped: 0, overseas: 0 },
+      values: { inStock: 0, pending: 0, shipped: 0, overseas: 0 }
+    };
+    for (const item of groupItems) {
+      for (const stage of Object.keys(summary.quantities)) {
+        summary.quantities[stage] += item.quantities[stage];
+        summary.values[stage] += item.values[stage];
+      }
+    }
+    summary.totalQuantity = round(Object.values(summary.quantities).reduce((sum, value) => sum + value, 0), 2);
+    summary.totalValue = round(Object.values(summary.values).reduce((sum, value) => sum + value, 0), 2);
+    storeGroups.push({
+      ...summary,
+      quantities: Object.fromEntries(Object.entries(summary.quantities).map(([key, value]) => [key, round(value, 2)])),
+      values: Object.fromEntries(Object.entries(summary.values).map(([key, value]) => [key, round(value, 2)])),
+      items: groupItems
+    });
+  }
+  totals.totalQuantity = round(Object.values(totals.quantities).reduce((sum, value) => sum + value, 0), 2);
+  totals.totalValue = round(Object.values(totals.values).reduce((sum, value) => sum + value, 0), 2);
+  return {
+    summary: {
+      quantities: Object.fromEntries(Object.entries(totals.quantities).map(([key, value]) => [key, round(value, 2)])),
+      values: Object.fromEntries(Object.entries(totals.values).map(([key, value]) => [key, round(value, 2)])),
+      totalQuantity: totals.totalQuantity,
+      totalValue: totals.totalValue
+    },
+    stores: storeGroups
+  };
+}
+
 function buildShipmentLine(input = {}, index = 0) {
   const lineType = input.lineType === "product" ? "product" : "box";
   const length = toNumber(input.length);
@@ -873,6 +1243,10 @@ function buildDomesticShipment(input, user, existingShipment = null) {
       : (line.productNameZh || line.length || line.width || line.height || line.actualWeight));
   const summary = summarizeShipmentLines(lines);
   const now = nowIso();
+  const allowedShipmentStatuses = new Set(["pending", "shipped", "overseas_arrived", "warehouse_delivered", "cancelled"]);
+  const allowedInspectionStatuses = new Set(["none", "inspection", "passed"]);
+  const rawStatus = input.status === "draft" ? "pending" : String(input.status || existingShipment?.status || "pending").trim();
+  const inspectionStatus = String(input.inspectionStatus || input.inspection_status || existingShipment?.inspectionStatus || "none").trim();
   return {
     id: existingShipment?.id || createId("shipment"),
     tenantId: existingShipment?.tenantId || getTenantId(user),
@@ -886,7 +1260,10 @@ function buildDomesticShipment(input, user, existingShipment = null) {
     customNo: String(input.customNo || input.custom_no || "").trim(),
     platformShipmentNo: String(input.platformShipmentNo || input.platform_shipment_no || "").trim(),
     title: String(input.title || input.customNo || input.trackingNo || existingShipment?.title || "").trim(),
-    status: String(input.status || existingShipment?.status || "draft").trim(),
+    status: allowedShipmentStatuses.has(rawStatus) ? rawStatus : "pending",
+    inspectionStatus: allowedInspectionStatuses.has(inspectionStatus) ? inspectionStatus : "none",
+    outboundWarehouse: String(input.outboundWarehouse || input.outbound_warehouse || existingShipment?.outboundWarehouse || "").trim(),
+    inboundWarehouse: String(input.inboundWarehouse || input.inbound_warehouse || existingShipment?.inboundWarehouse || "").trim(),
     receiver: String(input.receiver || "").trim(),
     address: String(input.address || "").trim(),
     remark: String(input.remark || "").trim(),
@@ -901,10 +1278,6 @@ function buildDomesticShipment(input, user, existingShipment = null) {
 }
 
 function validateDomesticShipment(shipment) {
-  if (!shipment.logisticsProvider) return "请填写物流商";
-  if (!shipment.logisticsMethod) return "请选择物流方式";
-  if (!shipment.shipper) return "请填写发货人";
-  if (!shipment.storeName) return "请填写店铺名";
   if (!shipment.lines.length) return "请至少录入一行箱子数据";
   const invalidBox = shipment.lines.find((line) => line.lineType !== "product" && (line.length <= 0 || line.width <= 0 || line.height <= 0 || line.actualWeight <= 0));
   if (invalidBox) return `箱号 ${invalidBox.boxNo || "-"} 缺少长宽高或实重`;
@@ -970,6 +1343,8 @@ function sanitizeShop(shop) {
     platform: shop.platform,
     shop_name: shop.shop_name,
     seller_id: shop.seller_id,
+    user_id: shop.user_id || "",
+    warehouse_code: shop.warehouse_code || "",
     auth_type: shop.auth_type,
     status: shop.status,
     token_expires_at: shop.token_expires_at || "",
@@ -1004,6 +1379,8 @@ function normalizeShopPayload(body, existingShop = null, user = null) {
     platform,
     shop_name: String(body.shop_name || body.shopName || "").trim(),
     seller_id: String(body.seller_id || body.sellerId || body.shopAccount || "").trim(),
+    user_id: String(body.user_id || body.userId || existingShop?.user_id || "").trim(),
+    warehouse_code: String(body.warehouse_code || body.warehouseCode || existingShop?.warehouse_code || "").trim(),
     auth_type: authType,
     access_token_encrypted: existingShop?.access_token_encrypted || "",
     refresh_token_encrypted: existingShop?.refresh_token_encrypted || "",
@@ -1031,9 +1408,21 @@ function validateShopPayload(shop) {
   return missing.length ? `缺少必填字段：${missing.join("、")}` : null;
 }
 
+function parseNoonCredential(body) {
+  const source = body.credential_json || body.credentialJson || body.noon_credential_json || body.noonCredentialJson;
+  if (!source) return null;
+  const credential = typeof source === "string" ? JSON.parse(source) : source;
+  const keyId = String(credential.key_id || credential.keyId || "").trim();
+  const privateKey = String(credential.private_key || credential.privateKey || "").trim();
+  if (!keyId || !privateKey) throw new Error("noon JSON 凭证缺少 key_id 或 private_key");
+  if (!privateKey.includes("PRIVATE KEY")) throw new Error("noon private_key 格式不正确");
+  return { keyId, privateKey };
+}
+
 function applyShopSecrets(shop, body) {
-  const apiKey = String(body.api_key || body.apiKey || "").trim();
-  const apiSecret = String(body.api_secret || body.apiSecret || "").trim();
+  const noonCredential = normalizePlatformType(shop.platform) === "noon" ? parseNoonCredential(body) : null;
+  const apiKey = String(noonCredential?.keyId || body.api_key || body.apiKey || "").trim();
+  const apiSecret = String(noonCredential?.privateKey || body.api_secret || body.apiSecret || "").trim();
   const accessToken = String(body.access_token || body.accessToken || "").trim();
   const refreshToken = String(body.refresh_token || body.refreshToken || "").trim();
   if (apiKey) shop.api_key_encrypted = encryptSecret(apiKey);
@@ -1050,6 +1439,475 @@ function getShopCredentials(shop) {
     accessToken: decryptSecret(shop.access_token_encrypted),
     refreshToken: decryptSecret(shop.refresh_token_encrypted)
   };
+}
+
+function toMoney(value) {
+  const number = Number(String(value ?? "").replace(/[^\d.-]/g, ""));
+  return Number.isFinite(number) ? Math.round((number + Number.EPSILON) * 100) / 100 : 0;
+}
+
+function pickFirstValue(source, keys) {
+  for (const key of keys) {
+    const parts = key.split(".");
+    let value = source;
+    for (const part of parts) value = value && typeof value === "object" ? value[part] : undefined;
+    if (value !== undefined && value !== null && value !== "") return value;
+  }
+  return "";
+}
+
+function safeJsonSize(value, max = 12000) {
+  const text = JSON.stringify(value || {});
+  return text.length > max ? { truncated: true, text: text.slice(0, max) } : value;
+}
+
+function publicStoreOrder(order) {
+  return {
+    id: order.id,
+    tenantId: order.tenantId,
+    shopId: order.shopId,
+    shopName: order.shopName,
+    platform: order.platform,
+    orderNo: order.orderNo || order.platform_order_no || "",
+    orderTime: order.orderTime || "",
+    status: order.status || "",
+    currency: order.currency || "",
+    salesAmount: toMoney(order.salesAmount),
+    commissionFee: toMoney(order.commissionFee),
+    logisticsFee: toMoney(order.logisticsFee),
+    netAmount: toMoney(order.netAmount),
+    syncedAt: order.syncedAt || "",
+    updatedAt: order.updatedAt || ""
+  };
+}
+
+function summarizeStoreOrders(orders) {
+  return orders.reduce((summary, order) => {
+    summary.count += 1;
+    summary.salesAmount += toMoney(order.salesAmount);
+    summary.commissionFee += toMoney(order.commissionFee);
+    summary.logisticsFee += toMoney(order.logisticsFee);
+    summary.netAmount += toMoney(order.netAmount);
+    return summary;
+  }, { count: 0, salesAmount: 0, commissionFee: 0, logisticsFee: 0, netAmount: 0 });
+}
+
+function normalizeMarketplaceOrder(rawOrder, shop) {
+  const orderNo = String(pickFirstValue(rawOrder, [
+    "po_nr", "poNr", "orderNo", "order_no", "order_nr", "order_number", "orderNumber", "id", "order.id"
+  ])).trim();
+  const salesAmount = toMoney(pickFirstValue(rawOrder, [
+    "salesAmount", "sales_amount", "total", "total_amount", "grand_total", "order_total", "amount", "payment.total", "financial.salesAmount"
+  ]));
+  const commissionFee = toMoney(pickFirstValue(rawOrder, [
+    "commissionFee", "commission_fee", "platform_commission", "commission", "fees.commission", "financial.commissionFee"
+  ]));
+  const logisticsFee = toMoney(pickFirstValue(rawOrder, [
+    "logisticsFee", "logistics_fee", "shipping_fee", "shippingFee", "delivery_fee", "fees.shipping", "financial.logisticsFee"
+  ]));
+  const netAmount = toMoney(pickFirstValue(rawOrder, [
+    "netAmount", "net_amount", "payout", "settlement_amount", "financial.netAmount"
+  ])) || Math.round((salesAmount - commissionFee - logisticsFee + Number.EPSILON) * 100) / 100;
+  return {
+    tenantId: getShopTenantId(shop),
+    shopId: shop.id,
+    shopName: shop.shop_name,
+    platform: shop.platform,
+    orderNo,
+    remoteId: orderNo || String(pickFirstValue(rawOrder, ["id", "uid"])).trim(),
+    orderTime: String(pickFirstValue(rawOrder, ["orderTime", "order_time", "created_at", "createdAt", "date_created", "placed_at", "po_date"]) || "").trim(),
+    status: String(pickFirstValue(rawOrder, ["status", "order_status", "state"]) || "").trim(),
+    currency: String(pickFirstValue(rawOrder, ["currency", "currency_code", "payment.currency"]) || "").trim(),
+    salesAmount,
+    commissionFee,
+    logisticsFee,
+    netAmount,
+    raw: safeJsonSize(rawOrder),
+    syncedAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function upsertStoreOrders(rawOrders, shop) {
+  let count = 0;
+  for (const rawOrder of rawOrders) {
+    const normalized = normalizeMarketplaceOrder(rawOrder, shop);
+    if (!normalized.orderNo && !normalized.remoteId) continue;
+    const existing = db.storeOrders.find((order) =>
+      order.tenantId === normalized.tenantId &&
+      order.platform === normalized.platform &&
+      order.shopId === normalized.shopId &&
+      (order.orderNo === normalized.orderNo || order.remoteId === normalized.remoteId)
+    );
+    if (existing) {
+      Object.assign(existing, normalized, { id: existing.id, createdAt: existing.createdAt || nowIso() });
+    } else {
+      db.storeOrders.unshift({ id: createId("order"), createdAt: nowIso(), ...normalized });
+    }
+    count += 1;
+  }
+  return count;
+}
+
+function getOrderLines(rawOrder) {
+  const lines = rawOrder.order_lines || rawOrder.orderLines || rawOrder.lines || rawOrder.items || rawOrder.order_items || [];
+  return Array.isArray(lines) ? lines : [];
+}
+
+function normalizeNoonFbpiOrder(rawOrder, shop) {
+  const platformOrderNo = String(pickFirstValue(rawOrder, [
+    "mp_order_nr", "mpOrderNr", "order_nr", "orderNo", "order_no", "orderNumber", "id"
+  ])).trim();
+  const salesAmount = toMoney(pickFirstValue(rawOrder, [
+    "salesAmount", "sales_amount", "total", "total_amount", "order_total", "grand_total", "amount", "payment.total"
+  ]));
+  const commissionFee = toMoney(pickFirstValue(rawOrder, [
+    "commissionFee", "commission_fee", "platform_commission", "commission", "fees.commission"
+  ]));
+  const logisticsFee = toMoney(pickFirstValue(rawOrder, [
+    "logisticsFee", "logistics_fee", "shipping_fee", "shippingFee", "delivery_fee", "fees.shipping"
+  ]));
+  const netAmount = toMoney(pickFirstValue(rawOrder, [
+    "netAmount", "net_amount", "payout", "settlement_amount"
+  ])) || round(salesAmount - commissionFee - logisticsFee, 2);
+  return {
+    tenantId: getShopTenantId(shop),
+    shopId: shop.id,
+    shopName: shop.shop_name,
+    platform: "Noon",
+    platform_order_no: platformOrderNo,
+    orderNo: platformOrderNo,
+    remoteId: platformOrderNo,
+    orderTime: String(pickFirstValue(rawOrder, ["created_at", "createdAt", "order_date", "orderDate", "orderTime", "created"]) || "").trim(),
+    status: String(pickFirstValue(rawOrder, ["status", "order_status", "state"]) || "").trim(),
+    currency: String(pickFirstValue(rawOrder, ["currency", "currency_code", "payment.currency"]) || "").trim(),
+    warehouseCode: shop.warehouse_code || "",
+    salesAmount,
+    commissionFee,
+    logisticsFee,
+    netAmount,
+    raw_json: rawOrder,
+    raw: safeJsonSize(rawOrder),
+    syncedAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function normalizeNoonFbpiOrderItem(line, order) {
+  const partnerSku = String(pickFirstValue(line, ["partner_sku", "partnerSku", "sku", "seller_sku", "sellerSku"]) || "").trim();
+  const matchedProduct = findProductByPartnerSku(partnerSku, order.tenantId);
+  return {
+    tenantId: order.tenantId,
+    shopId: order.shopId,
+    platform: order.platform,
+    platform_order_no: order.platform_order_no,
+    orderNo: order.platform_order_no,
+    partnerSku,
+    qty: toMoney(pickFirstValue(line, ["qty", "quantity", "ordered_qty", "orderedQty"])),
+    unitPrice: toMoney(pickFirstValue(line, ["unit_price", "unitPrice", "price", "unit_cost", "unitCost"])),
+    productId: matchedProduct?.id || "",
+    productName: matchedProduct?.customName || matchedProduct?.declarationName || "",
+    matchStatus: matchedProduct ? "matched" : "pending_match",
+    raw_json: line,
+    raw: safeJsonSize(line),
+    syncedAt: order.syncedAt,
+    updatedAt: order.updatedAt
+  };
+}
+
+function upsertNoonFbpiOrders(rawOrders, shop) {
+  let count = 0;
+  for (const rawOrder of rawOrders) {
+    const order = normalizeNoonFbpiOrder(rawOrder, shop);
+    if (!order.platform_order_no) continue;
+    const existing = db.storeOrders.find((item) =>
+      item.tenantId === order.tenantId &&
+      item.platform === "Noon" &&
+      item.platform_order_no === order.platform_order_no
+    );
+    if (existing) Object.assign(existing, order, { id: existing.id, createdAt: existing.createdAt || nowIso() });
+    else db.storeOrders.unshift({ id: createId("order"), createdAt: nowIso(), ...order });
+
+    const items = getOrderLines(rawOrder).map((line) => normalizeNoonFbpiOrderItem(line, order)).filter((item) => item.partnerSku);
+    db.storeOrderItems = db.storeOrderItems.filter((item) => !(item.tenantId === order.tenantId && item.platform === "Noon" && item.platform_order_no === order.platform_order_no));
+    db.storeOrderItems.unshift(...items.map((item) => ({ id: createId("order_item"), createdAt: nowIso(), ...item })));
+    count += 1;
+  }
+  return count;
+}
+
+function normalizeHeader(value) {
+  return String(value || "").trim().toLowerCase().replace(/[\s_\-（）()\/\\]+/g, "");
+}
+
+function pickRowValue(row, headerMap, aliases) {
+  for (const alias of aliases) {
+    const index = headerMap.get(normalizeHeader(alias));
+    if (index !== undefined) return row[index];
+  }
+  return "";
+}
+
+function rowsToObjects(rows) {
+  const headerRowIndex = rows.findIndex((row) => row.some((cell) => String(cell || "").trim()));
+  if (headerRowIndex < 0) return [];
+  const headers = rows[headerRowIndex].map((cell) => String(cell || "").trim());
+  const headerMap = new Map(headers.map((header, index) => [normalizeHeader(header), index]));
+  return rows.slice(headerRowIndex + 1)
+    .filter((row) => row.some((cell) => String(cell || "").trim()))
+    .map((row) => ({ row, headerMap }));
+}
+
+function normalizeFbnReportOrder(source, shop, user) {
+  const { row, headerMap } = source;
+  const orderNo = String(pickRowValue(row, headerMap, [
+    "order_nr", "order no", "order number", "mp_order_nr", "订单号", "订单编号"
+  ]) || "").trim();
+  const partnerSku = String(pickRowValue(row, headerMap, [
+    "partner_sku", "seller sku", "sku", "商家sku", "商品sku", "sku编码"
+  ]) || "").trim();
+  const matchedProduct = findProductByPartnerSku(partnerSku, getTenantId(user));
+  const salesAmount = toMoney(pickRowValue(row, headerMap, [
+    "sales", "sale amount", "sales amount", "item price", "gross sales", "销售额", "销售收入", "商品金额"
+  ]));
+  const commissionFee = toMoney(pickRowValue(row, headerMap, [
+    "commission", "platform commission", "commission fee", "平台佣金", "佣金"
+  ]));
+  const logisticsFee = toMoney(pickRowValue(row, headerMap, [
+    "shipping fee", "logistics fee", "delivery fee", "物流费", "运费", "配送费"
+  ]));
+  const netAmount = toMoney(pickRowValue(row, headerMap, [
+    "net amount", "payout", "settlement amount", "净收入", "结算金额", "应收金额"
+  ])) || round(salesAmount - commissionFee - logisticsFee, 2);
+  const quantity = toMoney(pickRowValue(row, headerMap, ["qty", "quantity", "数量", "件数"])) || 1;
+  const currency = String(pickRowValue(row, headerMap, ["currency", "currency code", "币种"]) || "").trim();
+  const status = String(pickRowValue(row, headerMap, ["status", "order status", "状态", "订单状态"]) || "").trim();
+  const orderTime = String(pickRowValue(row, headerMap, ["created_at", "order date", "date", "订单时间", "下单时间", "日期"]) || "").trim();
+  return {
+    order: {
+      tenantId: getTenantId(user),
+      shopId: shop?.id || "",
+      shopName: shop?.shop_name || "noon FBN",
+      platform: "Noon",
+      platform_order_no: orderNo,
+      orderNo,
+      remoteId: orderNo,
+      orderTime,
+      status,
+      currency,
+      salesAmount,
+      commissionFee,
+      logisticsFee,
+      netAmount,
+      source: "fbn_report",
+      raw_json: Object.fromEntries([...headerMap.entries()].map(([key, index]) => [key, row[index]])),
+      syncedAt: nowIso(),
+      updatedAt: nowIso()
+    },
+    item: {
+      tenantId: getTenantId(user),
+      shopId: shop?.id || "",
+      platform: "Noon",
+      platform_order_no: orderNo,
+      orderNo,
+      partnerSku,
+      qty: quantity,
+      unitPrice: quantity ? round(salesAmount / quantity, 2) : salesAmount,
+      productId: matchedProduct?.id || "",
+      productName: matchedProduct?.customName || matchedProduct?.declarationName || "",
+      matchStatus: matchedProduct ? "matched" : "pending_match",
+      source: "fbn_report",
+      raw_json: Object.fromEntries([...headerMap.entries()].map(([key, index]) => [key, row[index]])),
+      syncedAt: nowIso(),
+      updatedAt: nowIso()
+    }
+  };
+}
+
+function importFbnReportRows(rows, user) {
+  const tenantId = getTenantId(user);
+  const shop = db.shops.find((item) => getShopTenantId(item) === tenantId && normalizePlatformType(item.platform) === "noon" && !item.deleted_at);
+  const sources = rowsToObjects(rows);
+  let count = 0;
+  let itemCount = 0;
+  const touchedOrders = new Set();
+  for (const source of sources) {
+    const { order, item } = normalizeFbnReportOrder(source, shop, user);
+    if (!order.platform_order_no) continue;
+    if (!touchedOrders.has(order.platform_order_no)) {
+      db.storeOrderItems = db.storeOrderItems.filter((entry) => !(entry.tenantId === tenantId && entry.platform === "Noon" && entry.platform_order_no === order.platform_order_no && entry.source === "fbn_report"));
+      touchedOrders.add(order.platform_order_no);
+    }
+    const existing = db.storeOrders.find((entry) => entry.tenantId === tenantId && entry.platform === "Noon" && entry.platform_order_no === order.platform_order_no);
+    if (existing) {
+      const firstLineInImport = touchedOrders.has(`${order.platform_order_no}:reset`) ? false : true;
+      if (firstLineInImport) {
+        Object.assign(existing, { ...order, id: existing.id, createdAt: existing.createdAt || nowIso(), salesAmount: 0, commissionFee: 0, logisticsFee: 0, netAmount: 0 });
+        touchedOrders.add(`${order.platform_order_no}:reset`);
+      }
+      existing.salesAmount = round(toMoney(existing.salesAmount) + toMoney(order.salesAmount), 2);
+      existing.commissionFee = round(toMoney(existing.commissionFee) + toMoney(order.commissionFee), 2);
+      existing.logisticsFee = round(toMoney(existing.logisticsFee) + toMoney(order.logisticsFee), 2);
+      existing.netAmount = round(toMoney(existing.netAmount) + toMoney(order.netAmount), 2);
+    } else {
+      db.storeOrders.unshift({ id: createId("order"), createdAt: nowIso(), ...order });
+      touchedOrders.add(`${order.platform_order_no}:reset`);
+      count += 1;
+    }
+    if (item.partnerSku) {
+      db.storeOrderItems.unshift({ id: createId("order_item"), createdAt: nowIso(), ...item });
+      itemCount += 1;
+    }
+  }
+  return { count, itemCount, rowCount: sources.length };
+}
+
+function normalizeSku(value) {
+  return String(value || "").trim().replace(/\s+/g, "").toLowerCase();
+}
+
+function findProductByPartnerSku(partnerSku, tenantId = DEFAULT_TENANT_ID) {
+  const sku = normalizeSku(partnerSku);
+  if (!sku) return null;
+  return db.products.find((product) => {
+    if (product.tenantId && product.tenantId !== tenantId) return false;
+    return [product.sku, product.partnerSku, product.customName, product.declarationName]
+      .some((value) => normalizeSku(value) === sku);
+  }) || null;
+}
+
+function unwrapNoonPoPayload(raw) {
+  if (!raw || typeof raw !== "object") return {};
+  return raw.data?.po || raw.data?.purchase_order || raw.po || raw.purchase_order || raw.data || raw;
+}
+
+function getNoonPoLines(po) {
+  const lines = po.po_lines || po.poLines || po.lines || po.items || po.order_lines || [];
+  return Array.isArray(lines) ? lines : [];
+}
+
+function normalizeFbpoPo(raw, shop, requestedPoNr = "") {
+  const po = unwrapNoonPoPayload(raw);
+  const poNr = String(po.po_nr || po.poNr || requestedPoNr || "").trim();
+  return {
+    tenantId: getShopTenantId(shop),
+    shopId: shop.id,
+    shopName: shop.shop_name,
+    poNr,
+    merchantCode: String(po.merchant_code || po.merchantCode || "").trim(),
+    warehouseCode: String(po.warehouse_code || po.warehouseCode || "").trim(),
+    currency: String(po.po_currency || po.currency || po.poCurrency || "").trim(),
+    status: String(po.po_status || po.status || po.poStatus || "").trim(),
+    releaseDate: String(po.po_release_date || po.release_date || po.releaseDate || "").trim(),
+    rawJson: raw,
+    syncedAt: nowIso(),
+    updatedAt: nowIso()
+  };
+}
+
+function normalizeFbpoPoItem(line, order) {
+  const partnerSku = String(line.partner_sku || line.partnerSku || line.sku || "").trim();
+  const matchedProduct = findProductByPartnerSku(partnerSku, order.tenantId);
+  return {
+    tenantId: order.tenantId,
+    shopId: order.shopId,
+    poNr: order.poNr,
+    partnerSku,
+    qty: toMoney(line.qty || line.quantity || line.ordered_qty || line.orderedQty),
+    unitCost: toMoney(line.unit_cost || line.unitCost || line.cost || line.price),
+    productId: matchedProduct?.id || "",
+    productName: matchedProduct?.customName || matchedProduct?.declarationName || "",
+    matchStatus: matchedProduct ? "matched" : "pending_match",
+    rawJson: line,
+    syncedAt: order.syncedAt,
+    updatedAt: order.updatedAt
+  };
+}
+
+function addSyncLog(user, payload) {
+  db.syncLogs.unshift({
+    id: createId("sync_log"),
+    tenantId: getTenantId(user),
+    module: payload.module || "sync",
+    platform: payload.platform || "",
+    shopId: payload.shopId || "",
+    shopName: payload.shopName || "",
+    target: payload.target || "",
+    status: payload.status || "success",
+    message: payload.message || "",
+    detail: payload.detail || null,
+    createdAt: nowIso(),
+    createdBy: user.id
+  });
+  db.syncLogs = db.syncLogs.slice(0, 2000);
+}
+
+function upsertFbpoPo(raw, shop, requestedPoNr = "") {
+  const order = normalizeFbpoPo(raw, shop, requestedPoNr);
+  if (!order.poNr) throw new Error("FBPO 返回数据缺少 po_nr");
+  const existing = db.fbpoOrders.find((item) => item.tenantId === order.tenantId && item.poNr === order.poNr);
+  if (existing) Object.assign(existing, order, { id: existing.id, createdAt: existing.createdAt || nowIso() });
+  else db.fbpoOrders.unshift({ id: createId("fbpo"), createdAt: nowIso(), ...order });
+
+  const po = unwrapNoonPoPayload(raw);
+  const items = getNoonPoLines(po).map((line) => normalizeFbpoPoItem(line, order)).filter((item) => item.partnerSku);
+  db.fbpoOrderItems = db.fbpoOrderItems.filter((item) => !(item.tenantId === order.tenantId && item.poNr === order.poNr));
+  db.fbpoOrderItems.unshift(...items.map((item) => ({ id: createId("fbpo_item"), createdAt: nowIso(), ...item })));
+  return { order, items };
+}
+
+function publicFbpoOrder(order) {
+  const items = db.fbpoOrderItems.filter((item) => item.tenantId === order.tenantId && item.poNr === order.poNr);
+  return {
+    id: order.id,
+    poNr: order.poNr,
+    merchantCode: order.merchantCode,
+    warehouseCode: order.warehouseCode,
+    currency: order.currency,
+    status: order.status,
+    releaseDate: order.releaseDate,
+    shopName: order.shopName || "",
+    itemCount: items.length,
+    pendingMatchCount: items.filter((item) => item.matchStatus !== "matched").length,
+    totalQty: items.reduce((sum, item) => sum + toMoney(item.qty), 0),
+    totalCost: items.reduce((sum, item) => sum + toMoney(item.qty) * toMoney(item.unitCost), 0),
+    syncedAt: order.syncedAt,
+    items: items.map((item) => ({
+      partnerSku: item.partnerSku,
+      qty: item.qty,
+      unitCost: item.unitCost,
+      productId: item.productId,
+      productName: item.productName,
+      matchStatus: item.matchStatus
+    }))
+  };
+}
+
+function base64UrlJson(value) {
+  return Buffer.from(JSON.stringify(value)).toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+}
+
+function createNoonJwt(credentials) {
+  const header = { alg: "RS256", typ: "JWT", kid: credentials.apiKey };
+  const now = Math.floor(Date.now() / 1000);
+  const payload = { iss: credentials.apiKey, sub: credentials.apiKey, iat: now, exp: now + 300 };
+  const signingInput = `${base64UrlJson(header)}.${base64UrlJson(payload)}`;
+  const signature = crypto.sign("RSA-SHA256", Buffer.from(signingInput), credentials.apiSecret)
+    .toString("base64").replace(/=/g, "").replace(/\+/g, "-").replace(/\//g, "_");
+  return `${signingInput}.${signature}`;
+}
+
+function extractOrderArray(data) {
+  if (Array.isArray(data)) return data;
+  for (const key of ["fbpi_orders", "fbpiOrders", "orders", "items", "data", "results", "list"]) {
+    const value = data?.[key];
+    if (Array.isArray(value)) return value;
+    if (value && typeof value === "object") {
+      const nested = extractOrderArray(value);
+      if (nested.length) return nested;
+    }
+  }
+  return [];
 }
 
 function normalizePlatformType(value) {
@@ -1081,6 +1939,7 @@ function assertSecretRequirements(shop, isCreate = false) {
   }
   if (shop.auth_type === "api_key") {
     if (isCreate && !credentials.apiKey) return "API Key 店铺必须填写 API Key";
+    if (isCreate && shop.platform === "noon" && !credentials.apiSecret) return "noon 店铺必须上传 JSON 凭证或填写 private_key";
   }
   return null;
 }
@@ -1143,6 +2002,26 @@ class MercadoLibreAdapter extends MarketplaceAdapter {
     if (data.expires_in) shop.token_expires_at = new Date(Date.now() + Number(data.expires_in) * 1000).toISOString();
     return { ok: true, message: "Mercado Libre token 已刷新" };
   }
+  async fetchOrders(shop, options = {}) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.accessToken) throw new Error("Missing Mercado Libre access_token");
+    const endpoint = process.env.MERCADOLIBRE_ORDERS_URL || "https://api.mercadolibre.com/orders/search";
+    const url = new URL(endpoint);
+    if (shop.seller_id) url.searchParams.set("seller", shop.seller_id);
+    const dateFrom = options.dateFrom || options.date_from || options.created_after || options.createdAfter;
+    const dateTo = options.dateTo || options.date_to || options.created_before || options.createdBefore;
+    if (dateFrom) url.searchParams.set("order.date_created.from", new Date(dateFrom).toISOString());
+    if (dateTo) url.searchParams.set("order.date_created.to", new Date(dateTo).toISOString());
+    if (options.limit) url.searchParams.set("limit", String(options.limit));
+    const response = await fetch(url, {
+      headers: { "Authorization": `Bearer ${credentials.accessToken}`, "Accept": "application/json" },
+      signal: AbortSignal.timeout(20000)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || `Mercado Libre orders sync failed ${response.status}`);
+    const orders = Array.isArray(data.results) ? data.results : extractOrderArray(data);
+    return { orders, message: `Mercado Libre returned ${orders.length} orders`, responseKeys: Object.keys(data || {}).slice(0, 12) };
+  }
 }
 
 class NoonAdapter extends MarketplaceAdapter {
@@ -1150,7 +2029,122 @@ class NoonAdapter extends MarketplaceAdapter {
     const credentials = getShopCredentials(shop);
     if (!credentials.apiKey || !credentials.apiSecret) throw new Error("noon 需要 API Key 和 API Secret");
     if (credentials.apiKey.length < 8 || credentials.apiSecret.length < 8) throw new Error("noon 密钥长度过短");
-    return { ok: true, message: "noon 密钥格式已通过，正式 API 适配器待接入" };
+    if (!credentials.apiSecret.includes("PRIVATE KEY")) throw new Error("noon private_key 格式不正确，请上传 JSON 凭证文件");
+    return { ok: true, message: "noon JSON 凭证格式已通过" };
+  }
+
+  async fetchOrders(shop, options = {}) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.apiKey || !credentials.apiSecret) throw new Error("noon 需要 JSON 凭证中的 key_id 和 private_key");
+    const poNumbers = Array.isArray(options.poNumbers) ? options.poNumbers.map((item) => String(item).trim()).filter(Boolean) : [];
+    const endpoint = process.env.NOON_PO_GET_URL || process.env.NOON_ORDERS_URL || "https://noon-api-gateway.noon.partners/fbpo/v1/po/:po_nr/get";
+    if (endpoint.includes(":po_nr") && !poNumbers.length) {
+      throw new Error("这个 noon 接口是单个 PO 查询接口，请先在订单页输入 noon PO号 后再同步。");
+    }
+
+    const headers = {
+      "Accept": "application/json",
+      "Authorization": `Bearer ${createNoonJwt(credentials)}`,
+      "X-API-Key": credentials.apiKey
+    };
+    const orders = [];
+    const targets = endpoint.includes(":po_nr") ? poNumbers : [""];
+    for (const poNumber of targets) {
+      const url = new URL(endpoint.replace(":po_nr", encodeURIComponent(poNumber)));
+      if (!endpoint.includes(":po_nr") && shop.seller_id) url.searchParams.set("seller_id", shop.seller_id);
+      if (!endpoint.includes(":po_nr") && options.dateFrom) url.searchParams.set("date_from", options.dateFrom);
+      if (!endpoint.includes(":po_nr") && options.dateTo) url.searchParams.set("date_to", options.dateTo);
+      const response = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${createNoonJwt(credentials)}`,
+        "X-API-Key": credentials.apiKey
+      },
+      signal: AbortSignal.timeout(20000)
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(data.message || data.error || `noon PO ${poNumber || ""} 同步失败 ${response.status}`);
+      const extracted = extractOrderArray(data);
+      if (extracted.length) orders.push(...extracted);
+      else orders.push({ ...data, po_nr: poNumber || data.po_nr || data.poNr });
+    }
+    return { orders, message: `noon 返回 ${orders.length} 单` };
+  }
+
+  async fetchFbpoPo(shop, poNumber) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.apiKey || !credentials.apiSecret) throw new Error("noon 需要 JSON 凭证中的 key_id 和 private_key");
+    const cleanPo = String(poNumber || "").trim();
+    if (!cleanPo) throw new Error("缺少 noon PO号");
+    const endpoint = process.env.NOON_FBPO_GET_PO_URL || "https://noon-api-gateway.noon.partners/fbpo/v1/po/:po_nr/get";
+    const url = new URL(endpoint.replace(":po_nr", encodeURIComponent(cleanPo)));
+    const response = await fetch(url, {
+      headers: {
+        "Accept": "application/json",
+        "Authorization": `Bearer ${createNoonJwt(credentials)}`,
+        "X-API-Key": credentials.apiKey
+      },
+      signal: AbortSignal.timeout(20000)
+    });
+    const data = await response.json().catch(() => ({}));
+    if (!response.ok) throw new Error(data.message || data.error || `noon FBPO ${cleanPo} 同步失败 ${response.status}`);
+    return data;
+  }
+
+  async fetchFbpiOrders(shop, options = {}) {
+    const credentials = getShopCredentials(shop);
+    if (!credentials.apiKey || !credentials.apiSecret) throw new Error("noon 需要 JSON 凭证中的 key_id 和 private_key");
+    const warehouseCode = String(options.warehouse_code || options.warehouseCode || shop.warehouse_code || "").trim();
+    const createdAfter = String(options.created_after || options.createdAfter || "").trim();
+    const createdBefore = String(options.created_before || options.createdBefore || "").trim();
+    if (!createdAfter || !createdBefore) throw new Error("同步订单需要 created_after 和 created_before");
+    const endpoints = process.env.NOON_FBPI_ORDERS_LIST_URL
+      ? [process.env.NOON_FBPI_ORDERS_LIST_URL]
+      : [
+          "https://noon-api-gateway.noon.partners/v1/fbpi-orders/list",
+          "https://noon-api-gateway.noon.partners/fbpi/v1/fbpi-orders/list"
+        ];
+    const headers = {
+      "Accept": "application/json",
+      "Content-Type": "application/json",
+      "Authorization": `Bearer ${createNoonJwt(credentials)}`,
+      "X-API-Key": credentials.apiKey
+    };
+    const orders = [];
+    const responseKeys = [];
+    let nextToken = options.next_token || options.nextToken || "";
+    let page = 0;
+    do {
+      page += 1;
+      const body = {
+        created_after: createdAfter,
+        created_before: createdBefore
+      };
+      if (warehouseCode) body.warehouse_code = warehouseCode;
+      let response = null;
+      let data = null;
+      let lastError = "";
+      for (const endpoint of endpoints) {
+        const url = new URL(endpoint);
+        if (nextToken) url.searchParams.set("next_token", nextToken);
+        response = await fetch(url, {
+          method: "POST",
+          headers,
+          body: JSON.stringify(body),
+          signal: AbortSignal.timeout(25000)
+        });
+        data = await response.json().catch(() => ({}));
+        if (response.ok) break;
+        lastError = data.message || data.error || `noon FBPI 订单同步失败 ${response.status}`;
+        if (response.status !== 404) break;
+      }
+      if (!response.ok) throw new Error(lastError);
+      if (data && typeof data === "object" && !Array.isArray(data)) responseKeys.push(Object.keys(data).slice(0, 12));
+      orders.push(...extractOrderArray(data));
+      nextToken = String(data.next_token || data.nextToken || data.data?.next_token || data.meta?.next_token || "").trim();
+      if (page > 100) throw new Error("noon FBPI 分页超过 100 页，已停止以避免无限循环");
+    } while (nextToken);
+    return { orders, message: `noon FBPI 返回 ${orders.length} 单`, responseKeys };
   }
 }
 
@@ -1176,13 +2170,31 @@ function getMarketplaceAdapter(platform) {
   return adapter;
 }
 
+function shouldRefreshShopToken(shop) {
+  if (normalizePlatformType(shop.platform) !== "mercadolibre" || shop.auth_type !== "oauth") return false;
+  const credentials = getShopCredentials(shop);
+  if (!credentials.refreshToken) return false;
+  if (!credentials.accessToken) return true;
+  const expiresAt = new Date(shop.token_expires_at || 0).getTime();
+  return !expiresAt || expiresAt - Date.now() <= TOKEN_REFRESH_WINDOW_MS;
+}
+
+async function ensureFreshShopToken(shop, adapter = getMarketplaceAdapter(shop.platform)) {
+  if (!shouldRefreshShopToken(shop)) return { refreshed: false };
+  const result = await adapter.refreshToken(shop);
+  shop.status = "connected";
+  shop.last_error = "";
+  shop.updated_at = nowIso();
+  return { refreshed: true, result };
+}
+
 function getRequestOrigin(req) {
   const proto = req.headers["x-forwarded-proto"] || "http";
   return `${proto}://${req.headers.host}`;
 }
 
 function mercadoLibreRedirectUri(req) {
-  return `${getRequestOrigin(req)}/oauth/mercadolibre/callback`;
+  return `${getRequestOrigin(req)}/api/mercadolibre/callback`;
 }
 
 function createMercadoLibreAuthUrl(req, user, body) {
@@ -1209,7 +2221,7 @@ function createMercadoLibreAuthUrl(req, user, body) {
   });
   db.oauthStates = db.oauthStates.slice(0, 100);
 
-  const url = new URL("https://auth.mercadolibre.com/authorization");
+  const url = new URL("https://global-selling.mercadolibre.com/authorization");
   url.searchParams.set("response_type", "code");
   url.searchParams.set("client_id", clientId);
   url.searchParams.set("redirect_uri", mercadoLibreRedirectUri(req));
@@ -1261,6 +2273,7 @@ function upsertMercadoLibreShopFromOAuth(oauthState, tokenData, profile, user) {
       platform: "mercadolibre",
       shop_name: shopName,
       seller_id: sellerId,
+      user_id: "",
       auth_type: "oauth",
       access_token_encrypted: "",
       refresh_token_encrypted: "",
@@ -1292,6 +2305,7 @@ function upsertMercadoLibreShopFromOAuth(oauthState, tokenData, profile, user) {
 
   shop.shop_name = shopName;
   shop.seller_id = sellerId;
+  shop.user_id = String(tokenData.user_id || profile.id || sellerId || "").trim();
   shop.auth_type = "oauth";
   shop.access_token_encrypted = tokenData.access_token ? encryptSecret(tokenData.access_token) : shop.access_token_encrypted;
   shop.refresh_token_encrypted = tokenData.refresh_token ? encryptSecret(tokenData.refresh_token) : shop.refresh_token_encrypted;
@@ -1408,6 +2422,50 @@ async function handleApi(req, res, pathname) {
       return sendJson(res, 201, { products: productsToCreate, count: productsToCreate.length });
     }
 
+    if (pathname === "/api/store-assets" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      return sendJson(res, 200, buildStoreAssets(session.user));
+    }
+
+    if (pathname === "/api/store-assets/in-stock" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const body = await readBody(req);
+      const rows = Array.isArray(body.items) ? body.items : [];
+      if (!rows.length) return sendJson(res, 400, { error: "没有可导入的在售库存" });
+      if (rows.length > 1000) return sendJson(res, 400, { error: "单次最多导入 1000 条在售库存" });
+      const tenantId = getTenantId(session.user);
+      const imported = rows
+        .map((row, index) => {
+          const storeName = String(row.storeName || row.store_name || "").trim();
+          const productName = String(row.productName || row.product_name || row.customName || "").trim();
+          const zhName = String(row.zhName || row.zh_name || row.productNameZh || "").trim();
+          const quantity = toNumber(row.quantity || row.inStock || row.stock);
+          const product = findProductForAsset(storeName, productName, zhName);
+          return {
+            id: createId("stock"),
+            tenantId,
+            storeName: storeName || product?.storeName || "未分配店铺",
+            productName: productName || product?.customName || zhName,
+            zhName: zhName || product?.zhName || productName,
+            productId: product?.id || "",
+            quantity,
+            source: "xlsx",
+            rowNo: index + 2,
+            updatedAt: nowIso(),
+            updatedBy: session.user.id
+          };
+        })
+        .filter((row) => (row.productName || row.zhName) && row.quantity > 0);
+      if (!imported.length) return sendJson(res, 400, { error: "没有有效的在售库存行" });
+      db.storeInventory = db.storeInventory.filter((row) => row.tenantId !== tenantId || row.source !== "xlsx");
+      db.storeInventory.unshift(...imported);
+      addLog(session.user, "import_store_inventory", "store_assets", `导入在售库存 ${imported.length} 条`);
+      await saveDb();
+      return sendJson(res, 201, { count: imported.length, assets: buildStoreAssets(session.user) });
+    }
+
     if (pathname === "/api/products/match" && req.method === "GET") {
       const session = requireAuth(req, res);
       if (!session) return;
@@ -1432,6 +2490,11 @@ async function handleApi(req, res, pathname) {
           trackingNo: shipment.trackingNo || "",
           customNo: shipment.customNo || "",
           platformShipmentNo: shipment.platformShipmentNo || "",
+          shipper: shipment.shipper || "",
+          status: shipment.status || "pending",
+          inspectionStatus: shipment.inspectionStatus || "none",
+          outboundWarehouse: shipment.outboundWarehouse || "",
+          inboundWarehouse: shipment.inboundWarehouse || "",
           title: shipment.title,
           status: shipment.status,
           boxCount: shipment.boxCount,
@@ -1464,59 +2527,45 @@ async function handleApi(req, res, pathname) {
       const shipment = findTenantShipment(session.user, domesticShipmentMatch[1]);
       if (!shipment) return sendJson(res, 404, { error: "发货单不存在" });
       const headers = [
-        "箱号", "箱长cm", "箱宽cm", "箱高cm", "箱实重kg", "箱CBM", "箱体积重kg", "箱计费重kg",
-        "箱内产品中文名", "数量",
-        "产品图片", "产品库ID", "店铺名", "自定义商品名", "1688采购链接", "主图链接", "变体信息",
-        "申报名", "中文品名", "英文品名", "中文材质", "英文材质", "中文用途", "英文用途",
-        "产品类别", "产品长cm", "产品宽cm", "产品高cm", "产品重量kg", "采购价RMB",
-        "产品体积m3", "产品计费重kg", "海关编码", "海关编码标签"
+        "箱号", "行类型", "箱长cm", "箱宽cm", "箱高cm", "箱实重kg", "箱CBM", "箱体积重kg", "箱计费重kg",
+        "箱内产品中文名", "数量", "产品图片", "产品名", "中文品名", "英文品名", "中文材质", "英文材质", "采购价RMB", "重量kg", "海关编码"
       ];
       const exportLines = shipment.lines.filter((line) => line.productNameZh);
+      const exportedBoxes = new Set();
       const rows = exportLines.map((line) => {
         const storedProduct = line.productId ? db.products.find((product) => product.id === line.productId) : null;
         const product = publicProductMatch(storedProduct) || line.matchedProduct || {};
+        const boxKey = String(line.boxNo || "").trim();
+        const showBoxInfo = !boxKey || !exportedBoxes.has(boxKey);
+        if (boxKey) exportedBoxes.add(boxKey);
         return [
           line.boxNo,
-          line.length,
-          line.width,
-          line.height,
-          line.actualWeight,
-          line.volumeCbm,
-          line.volumeWeight,
-          line.chargeWeight,
+          line.lineType === "product" ? "产品" : "箱",
+          showBoxInfo ? line.length : "",
+          showBoxInfo ? line.width : "",
+          showBoxInfo ? line.height : "",
+          showBoxInfo ? line.actualWeight : "",
+          showBoxInfo ? line.volumeCbm : "",
+          showBoxInfo ? line.volumeWeight : "",
+          showBoxInfo ? line.chargeWeight : "",
           line.productNameZh,
           line.quantity || "",
           { type: "image", src: product.mainImage || "" },
-          product.id || line.productId || "",
-          product.storeName || "",
           product.customName || "",
-          product.purchaseUrl || "",
-          product.mainImage || "",
-          JSON.stringify(product.variants || []),
-          product.declarationName || line.declarationName || "",
           product.zhName || line.zhName || "",
           product.enName || line.enName || "",
           product.materialZh || line.materialZh || "",
           product.materialEn || line.materialEn || "",
-          product.useZh || line.useZh || "",
-          product.useEn || line.useEn || "",
-          product.category || line.category || "",
-          product.length || "",
-          product.width || "",
-          product.height || "",
-          product.weight || "",
           product.price || "",
-          product.volumeCbm || "",
-          product.chargeWeight || "",
-          product.hsCode || line.hsCode || "",
-          product.hsLabel || line.hsLabel || ""
+          product.weight || "",
+          product.hsCode || line.hsCode || ""
         ];
       });
       rows.push([
-        "合计", "", "", "", shipment.totalActualWeight, shipment.totalCbm, shipment.totalVolumeWeight, shipment.totalChargeWeight,
-        "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", "", ""
+        "合计", "", "", "", "", shipment.totalActualWeight, shipment.totalCbm, shipment.totalVolumeWeight, shipment.totalChargeWeight,
+        "", "", "", "", "", "", "", "", "", "", ""
       ]);
-      return sendExcelHtml(res, `国内发货箱单_${shipment.shipmentNo}.xls`, headers, rows);
+      return sendXlsx(res, `国内发货箱单_${shipment.shipmentNo}.xlsx`, headers, rows, 11);
     }
 
     if (domesticShipmentMatch && req.method === "GET" && !domesticShipmentMatch[2]) {
@@ -1552,6 +2601,194 @@ async function handleApi(req, res, pathname) {
       addLog(session.user, "delete_domestic_shipment", shipment.id, `删除国内发货单 ${shipment.shipmentNo}`);
       await saveDb();
       return sendJson(res, 200, { ok: true });
+    }
+
+    if (pathname === "/api/store-orders" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const tenantId = getTenantId(session.user);
+      const platform = normalizePlatformType(url.searchParams.get("platform") || "");
+      const shopQuery = String(url.searchParams.get("shop") || "").trim().toLowerCase();
+      const keyword = String(url.searchParams.get("keyword") || "").trim().toLowerCase();
+      const status = String(url.searchParams.get("status") || "").trim().toLowerCase();
+      const orders = db.storeOrders
+        .filter((order) => order.tenantId === tenantId)
+        .filter((order) => !platform || normalizePlatformType(order.platform) === platform)
+        .filter((order) => !shopQuery || String(order.shopName || "").toLowerCase().includes(shopQuery))
+        .filter((order) => !keyword || String(order.orderNo || order.remoteId || "").toLowerCase().includes(keyword))
+        .filter((order) => !status || String(order.status || "").toLowerCase().includes(status))
+        .sort((a, b) => new Date(b.orderTime || b.syncedAt || 0) - new Date(a.orderTime || a.syncedAt || 0));
+      return sendJson(res, 200, { orders: orders.map(publicStoreOrder), summary: summarizeStoreOrders(orders) });
+    }
+
+    if (pathname === "/api/store-orders/sync" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const body = await readBody(req);
+      const requestedPlatform = normalizePlatformType(body.platform || "");
+      const tenantId = getTenantId(session.user);
+      const shops = db.shops
+        .filter((shop) => getShopTenantId(shop) === tenantId && !shop.deleted_at)
+        .filter((shop) => !requestedPlatform || shop.platform === requestedPlatform)
+        .sort((a, b) => (a.platform === "noon" ? -1 : 0) - (b.platform === "noon" ? -1 : 0));
+      if (!shops.length) return sendJson(res, 400, { error: requestedPlatform ? "没有可同步的该平台店铺" : "没有可同步的店铺" });
+
+      let synced = 0;
+      const errors = [];
+      for (const shop of shops) {
+        try {
+          const adapter = getMarketplaceAdapter(shop.platform);
+          await ensureFreshShopToken(shop, adapter);
+          const result = shop.platform === "noon"
+            ? await adapter.fetchFbpiOrders(shop, body)
+            : await adapter.fetchOrders(shop, body);
+          const count = shop.platform === "noon"
+            ? upsertNoonFbpiOrders(result.orders || [], shop)
+            : upsertStoreOrders(result.orders || [], shop);
+          synced += count;
+          shop.status = "connected";
+          shop.last_sync_at = nowIso();
+          shop.last_error = "";
+          shop.updated_at = nowIso();
+          shop.updated_by = session.user.id;
+          addLog(session.user, "sync_store_orders", shop.id, `同步店铺订单 ${shop.shop_name} ${count} 单`);
+          addSyncLog(session.user, {
+            module: "store_orders",
+            platform: shop.platform,
+            shopId: shop.id,
+            shopName: shop.shop_name,
+            target: body.created_after && body.created_before ? `${body.created_after} ~ ${body.created_before}` : "manual",
+            status: "success",
+            message: `同步店铺订单成功 ${count} 单${result.message ? `，${result.message}` : ""}`,
+            detail: { responseKeys: result.responseKeys || [] }
+          });
+        } catch (error) {
+          shop.status = "failed";
+          shop.last_error = error.message || "订单同步失败";
+          shop.updated_at = nowIso();
+          shop.updated_by = session.user.id;
+          errors.push(`${shop.shop_name}: ${shop.last_error}`);
+          addLog(session.user, "sync_store_orders_failed", shop.id, `同步店铺订单失败 ${shop.shop_name}: ${shop.last_error}`);
+          addSyncLog(session.user, {
+            module: "store_orders",
+            platform: shop.platform,
+            shopId: shop.id,
+            shopName: shop.shop_name,
+            target: body.created_after && body.created_before ? `${body.created_after} ~ ${body.created_before}` : "manual",
+            status: "failed",
+            message: shop.last_error
+          });
+        }
+      }
+      await saveDb();
+      if (!synced && errors.length) return sendJson(res, 400, { error: errors.join("；"), synced, errors });
+      return sendJson(res, 200, { synced, errors, message: errors.length ? `部分店铺失败：${errors.join("；")}` : "" });
+    }
+
+    if (pathname === "/api/store-orders/import-fbn-report" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const body = await readBody(req);
+      const rows = Array.isArray(body.rows) ? body.rows : [];
+      if (!rows.length) return sendJson(res, 400, { error: "没有可导入的 FBN 报表数据" });
+      const result = importFbnReportRows(rows, session.user);
+      if (!result.count && !result.itemCount) return sendJson(res, 400, { error: "未识别到订单号，请确认报表包含 order_nr / order number / 订单号" });
+      addSyncLog(session.user, {
+        module: "store_orders",
+        platform: "Noon",
+        shopName: "FBN Report",
+        target: "xlsx",
+        status: "success",
+        message: `导入 FBN 报表：订单 ${result.count} 单，明细 ${result.itemCount} 条`,
+        detail: result
+      });
+      await saveDb();
+      return sendJson(res, 201, result);
+    }
+
+    if (pathname === "/api/noon/fbpo/orders" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const tenantId = getTenantId(session.user);
+      const keyword = String(url.searchParams.get("keyword") || "").trim().toLowerCase();
+      const matchStatus = String(url.searchParams.get("matchStatus") || "").trim();
+      let orders = db.fbpoOrders
+        .filter((order) => order.tenantId === tenantId)
+        .filter((order) => !keyword || [order.poNr, order.merchantCode, order.warehouseCode, order.status].some((value) => String(value || "").toLowerCase().includes(keyword)))
+        .sort((a, b) => new Date(b.releaseDate || b.syncedAt || 0) - new Date(a.releaseDate || a.syncedAt || 0))
+        .map(publicFbpoOrder);
+      if (matchStatus === "pending_match") orders = orders.filter((order) => order.pendingMatchCount > 0);
+      if (matchStatus === "matched") orders = orders.filter((order) => order.itemCount > 0 && order.pendingMatchCount === 0);
+      return sendJson(res, 200, { orders });
+    }
+
+    if (pathname === "/api/noon/fbpo/sync" && req.method === "POST") {
+      const session = requireWritable(req, res);
+      if (!session) return;
+      const body = await readBody(req);
+      const poNumbers = Array.isArray(body.poNumbers) ? body.poNumbers.map((item) => String(item).trim()).filter(Boolean) : [];
+      if (!poNumbers.length) return sendJson(res, 400, { error: "请先输入需要同步的 noon PO号" });
+      const tenantId = getTenantId(session.user);
+      const noonShops = db.shops.filter((shop) => getShopTenantId(shop) === tenantId && shop.platform === "noon" && !shop.deleted_at);
+      const shop = body.shopId ? noonShops.find((item) => item.id === body.shopId) : noonShops[0];
+      if (!shop) return sendJson(res, 400, { error: "请先在店铺管理中新增并授权 noon 店铺" });
+
+      let synced = 0;
+      const errors = [];
+      const results = [];
+      const adapter = getMarketplaceAdapter("noon");
+      for (const poNumber of poNumbers) {
+        try {
+          const raw = await adapter.fetchFbpoPo(shop, poNumber);
+          const result = upsertFbpoPo(raw, shop, poNumber);
+          synced += 1;
+          results.push(publicFbpoOrder(result.order));
+          addSyncLog(session.user, {
+            module: "noon_fbpo",
+            platform: "noon",
+            shopId: shop.id,
+            shopName: shop.shop_name,
+            target: poNumber,
+            status: "success",
+            message: `同步 FBPO PO ${result.order.poNr} 成功，明细 ${result.items.length} 条`,
+            detail: { poNr: result.order.poNr, itemCount: result.items.length, pendingMatchCount: result.items.filter((item) => item.matchStatus !== "matched").length }
+          });
+        } catch (error) {
+          errors.push(`${poNumber}: ${error.message}`);
+          addSyncLog(session.user, {
+            module: "noon_fbpo",
+            platform: "noon",
+            shopId: shop.id,
+            shopName: shop.shop_name,
+            target: poNumber,
+            status: "failed",
+            message: error.message
+          });
+        }
+      }
+      shop.last_sync_at = synced ? nowIso() : shop.last_sync_at;
+      shop.last_error = errors[0] || "";
+      shop.status = errors.length && !synced ? "failed" : "connected";
+      shop.updated_at = nowIso();
+      shop.updated_by = session.user.id;
+      await saveDb();
+      if (!synced && errors.length) return sendJson(res, 400, { error: errors.join("；"), synced, errors });
+      return sendJson(res, 200, { synced, errors, orders: results });
+    }
+
+    if (pathname === "/api/sync-logs" && req.method === "GET") {
+      const session = requireAuth(req, res);
+      if (!session) return;
+      const url = new URL(req.url, `http://${req.headers.host || "localhost"}`);
+      const moduleName = String(url.searchParams.get("module") || "").trim();
+      const tenantId = getTenantId(session.user);
+      const logs = db.syncLogs
+        .filter((log) => log.tenantId === tenantId)
+        .filter((log) => !moduleName || log.module === moduleName)
+        .slice(0, 100);
+      return sendJson(res, 200, { logs });
     }
 
     if (pathname === "/api/shops" && req.method === "GET") {
@@ -1832,7 +3069,7 @@ async function main() {
   await loadDb();
   const server = http.createServer((req, res) => {
     const url = new URL(req.url, `http://${req.headers.host}`);
-    if (url.pathname === "/oauth/mercadolibre/callback") return handleMercadoLibreCallback(req, res);
+    if (url.pathname === "/api/mercadolibre/callback" || url.pathname === "/oauth/mercadolibre/callback") return handleMercadoLibreCallback(req, res);
     if (url.pathname.startsWith("/api/")) return handleApi(req, res, url.pathname);
     serveStatic(req, res, url.pathname);
   });
